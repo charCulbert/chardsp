@@ -1,0 +1,2 @@
+add_executable(chardsp_buffer_render bufferRender_Main.cpp)
+target_link_libraries(chardsp_buffer_render PRIVATE chardsp)
