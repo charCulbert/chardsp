@@ -3,7 +3,14 @@ cmake_minimum_required(VERSION 3.15)
 project(chardsp LANGUAGES CXX)
 
 include(CTest)
-option(CHARDSP_BUILD_EXAMPLES "Build the chardsp examples" ON)
+
+set(CHARDSP_TOP_LEVEL OFF)
+if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    set(CHARDSP_TOP_LEVEL ON)
+endif()
+
+option(CHARDSP_BUILD_TESTS "Build the chardsp tests" ${CHARDSP_TOP_LEVEL})
+option(CHARDSP_BUILD_EXAMPLES "Build the chardsp examples" ${CHARDSP_TOP_LEVEL})
 
 set(CHARDSP_CHOC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/choc")
 set(CHARDSP_ELLIPTIC_BLEP_DIR
@@ -23,7 +30,7 @@ target_include_directories(chardsp INTERFACE
     "${CHARDSP_ELLIPTIC_BLEP_DIR}")
 target_compile_features(chardsp INTERFACE cxx_std_17)
 
-if (BUILD_TESTING)
+if (BUILD_TESTING AND CHARDSP_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
