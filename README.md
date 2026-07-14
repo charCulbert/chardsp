@@ -17,10 +17,10 @@ external/choc
 external/elliptic-blep
 ```
 
-Clone recursively once the repository has a published URL:
+Clone recursively:
 
 ```sh
-git clone --recurse-submodules <chardsp-url> chardsp
+git clone --recurse-submodules https://github.com/charCulbert/chardsp.git
 ```
 
 For an existing checkout:
