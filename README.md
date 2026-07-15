@@ -2,9 +2,10 @@
 
 `chardsp` is a small header-only collection of audio DSP primitives. It
 contains a finite linear smoother, a Signalsmith elliptic-BLEP saw oscillator,
-an ADSR envelope, a lowpass/highpass state-variable filter, a discrete
-colored-noise generator, a 4x downsampler, and release-aware voice-slot
-management. It uses CHOC buffer views directly in block-oriented callers.
+a five-waveform Nomad oscillator, an ADSR envelope, a lowpass/highpass
+state-variable filter, a discrete colored-noise generator, a 4x downsampler,
+and release-aware voice-slot management. It uses CHOC buffer views directly in
+block-oriented callers.
 
 Runtime events, parameter schemas and state, MIDI mapping, scheduling,
 diagnostics transport, device hosting, UI, WebViews and command-line handling
@@ -42,6 +43,7 @@ Include headers directly:
 ```cpp
 #include "chardsp/chardsp_SmoothedValue.h"
 #include "chardsp/chardsp_EllipticSawOscillator.h"
+#include "chardsp/chardsp_Oscillator.h"
 #include "chardsp/chardsp_ADSREnvelope.h"
 #include "chardsp/chardsp_StateVariableFilter.h"
 #include "chardsp/chardsp_ColoredNoise.h"
@@ -87,16 +89,24 @@ independently.
   coefficients. `process()` accepts either four scalar oversamples or a
   `std::array<float, 4>`. It owns only fixed filter state and exposes no
   coefficient or oversampling policy.
+- `Oscillator` adds Nomad's pitched `saw`, `ramp`, `pulse`, `triangle`, and
+  `sine` waveform/shape equations. It renders at 4x through `Downsampler4x` and
+  exposes immediate waveform, frequency, shape, and phase-reset control.
+  Nomad's hard sync, micro-drift, two-oscillator routing, and physical models
+  remain higher-level policy. Noise stays a separate `ColoredNoise` source so
+  consumers can give it an explicit level and color.
 - `VoicePool<Voice, voiceCount>` owns a fixed array of the consumer's `Voice`
-  type and presents the small playable API: `prepare()`, `noteOn()`,
-  `noteOff()`, `allNotesOff()`, and `next()`. Internally it prefers a releasing
-  same-note voice, then a free voice, the oldest releasing voice, and finally
-  the oldest held voice. Re-pressing a released note applies Nomad's 2 ms
-  forced fade before the same slot restarts. Each instrument defines its own
-  allocation-free `Voice` DSP topology through the documented method contract;
-  no base class, virtual call, or runtime allocation is introduced.
+  type and presents the small playable API: `prepare()`, channel-aware
+  `noteOn()`/`noteOff()`, `setSustain()`, `allNotesOff()`, and `next()`.
+  Nomad's 32-note gate state is kept separate from its voice slots, released
+  identities remain eligible for same-note reuse for 10 seconds, and pressure
+  selects a free voice, the oldest releasing voice, then the oldest held voice.
+  Re-pressing a released note applies Nomad's 2 ms forced fade before that note
+  restarts. Each instrument defines its own allocation-free `Voice` DSP
+  topology through the documented method contract; no base class, virtual call,
+  or runtime allocation is introduced.
 
-All five components are in `namespace chardsp`; their reset, parameter,
+All six Nomad-derived components are in `namespace chardsp`; their reset, parameter,
 allocation, and per-sample methods are `noexcept`.
 
 ## Build and test

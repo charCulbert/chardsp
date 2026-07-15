@@ -13,6 +13,7 @@
 #include "chardsp/chardsp_ColoredNoise.h"
 #include "chardsp/chardsp_Downsampler4x.h"
 #include "chardsp/chardsp_EllipticSawOscillator.h"
+#include "chardsp/chardsp_Oscillator.h"
 #include "chardsp/chardsp_SmoothedValue.h"
 #include "chardsp/chardsp_StateVariableFilter.h"
 #include "chardsp/chardsp_VoicePool.h"
@@ -151,6 +152,77 @@ void testEllipticSaw (TestContext& context)
         for (size_t i = blockStart;
              i < std::min (blockStart + 127, expected.size()); ++i)
             CHECK (near (splitRender.next(), expected[i]));
+}
+
+void testOscillator (TestContext& context)
+{
+    constexpr std::array waveforms {
+        chardsp::OscillatorWaveform::saw,
+        chardsp::OscillatorWaveform::ramp,
+        chardsp::OscillatorWaveform::pulse,
+        chardsp::OscillatorWaveform::triangle,
+        chardsp::OscillatorWaveform::sine
+    };
+    constexpr std::array<std::array<float, 6>, 5> reference {{
+        {{ 0.002756481f, 0.095859312f, 0.598600566f,
+           1.067782998f, 0.649674058f, 0.579240561f }},
+        {{ -0.002756481f, -0.095859312f, -0.598600566f,
+           -1.067782998f, -0.649674058f, -0.579240561f }},
+        {{ 0.002501482f, 0.054757807f, 0.042682324f,
+           -0.799973488f, -1.350166559f, -0.746327102f }},
+        {{ -0.002728588f, -0.093261167f, -0.564077377f,
+           -0.920363069f, -0.357993066f, -0.175391957f }},
+        {{ 0.000087309f, 0.008079876f, 0.105925441f,
+           0.438298821f, 0.801043510f, 0.942837477f }}
+    }};
+
+    chardsp::Oscillator unprepared;
+    unprepared.setFrequency (440.0f);
+    CHECK (near (unprepared.next(), 0.0f));
+
+    for (size_t waveform = 0; waveform < waveforms.size(); ++waveform)
+    {
+        chardsp::Oscillator oscillator;
+        oscillator.prepare (48000.0f);
+        oscillator.setWaveform (waveforms[waveform]);
+        oscillator.setShape (0.0f);
+        oscillator.setFrequency (3000.0f);
+        oscillator.reset();
+
+        for (const auto expected : reference[waveform])
+            CHECK (near (oscillator.next(), expected, 0.000002f));
+    }
+
+    chardsp::Oscillator first;
+    chardsp::Oscillator second;
+    first.prepare (44100.0f);
+    second.prepare (44100.0f);
+    first.setWaveform (chardsp::OscillatorWaveform::triangle);
+    second.setWaveform (chardsp::OscillatorWaveform::triangle);
+    first.setShape (0.75f);
+    second.setShape (0.75f);
+    first.setFrequency (997.0f);
+    second.setFrequency (997.0f);
+    first.reset (0.37f);
+    second.reset (0.37f);
+    const auto allocationsBeforeRender = allocationCount.load();
+
+    for (int i = 0; i < 200000; ++i)
+    {
+        const auto sample = first.next();
+        CHECK (std::isfinite (sample));
+        CHECK (near (sample, second.next()));
+    }
+
+    CHECK (allocationCount.load() == allocationsBeforeRender);
+
+    first.setShape (-1.0f);
+    CHECK (near (first.getShape(), 0.0f));
+    first.setShape (2.0f);
+    CHECK (near (first.getShape(), 1.0f));
+    first.setFrequency (std::numeric_limits<float>::infinity());
+    CHECK (near (first.getFrequency(), 44100.0f * 0.49f));
+    CHECK (std::isfinite (first.next()));
 }
 
 void testChocTriangleModulation (TestContext& context)
@@ -785,29 +857,72 @@ void testVoicePool (TestContext& context)
 
     pool.noteOn (60, 0.4f);
     CHECK (pool.getVoice (0).startCount == 1);
+    pool.noteOn (60, 0.7f, 1);
+    CHECK (pool.findVoiceForNote (60, 1) == 1);
     pool.noteOn (62, 0.7f);
     pool.noteOn (64, 0.6f);
     CHECK (pool.getActiveVoiceCount() == 3);
+    CHECK (pool.findVoiceForNote (64) == 0);
+    CHECK (pool.isNoteHeld (60));
+
+    // A stolen physical key remains held in the note-gate layer, matching
+    // PolyNoteGate: another NoteOn for it is ignored until its NoteOff.
+    pool.noteOn (60, 0.5f);
+    CHECK (pool.findVoiceForNote (64) == 0);
 
     pool.noteOff (62);
-    CHECK (pool.getVoice (1).releaseCount == 1);
+    CHECK (pool.getVoice (2).releaseCount == 1);
     pool.noteOn (62, 0.9f);
-    CHECK (pool.getVoice (1).forcedReleaseCount == 1);
-    CHECK (near (pool.getVoice (1).lastForcedReleaseSeconds, 0.002f));
-    CHECK (pool.getVoice (1).startCount == 1);
+    CHECK (pool.getVoice (2).forcedReleaseCount == 1);
+    CHECK (near (pool.getVoice (2).lastForcedReleaseSeconds, 0.002f));
+    CHECK (pool.getVoice (2).startCount == 1);
     pool.next();
-    CHECK (pool.getVoice (1).startCount == 1);
+    CHECK (pool.getVoice (2).startCount == 1);
     pool.next();
-    CHECK (pool.getVoice (1).startCount == 2);
-    CHECK (pool.findVoiceForNote (62) == 1);
+    CHECK (pool.getVoice (2).startCount == 2);
+    CHECK (pool.findVoiceForNote (62) == 2);
 
+    // Cmajor parity: a released different pitch leaves its slot reserved, so
+    // a free voice is selected even after the release envelope becomes idle.
     pool.prepare (1000.0f);
     pool.noteOn (60, 1.0f);
     pool.noteOff (60);
+
+    for (int i = 0; i < 4; ++i)
+        pool.next();
+
+    CHECK (pool.getActiveVoiceCount() == 0);
+    CHECK (pool.findVoiceForNote (60) == 0);
     pool.noteOn (62, 1.0f);
     CHECK (pool.findVoiceForNote (60) == 0);
     CHECK (pool.findVoiceForNote (62) == 1);
 
+    // Cmajor parity: released same-pitch retriggers force-release and restart
+    // the existing slot after exactly 2 ms.
+    pool.prepare (1000.0f);
+    pool.noteOn (60, 1.0f);
+    pool.noteOff (60);
+
+    for (int i = 0; i < 4; ++i)
+        pool.next();
+
+    pool.noteOn (60, 0.25f);
+    CHECK (pool.getVoice (0).forcedReleaseCount == 1);
+    pool.next();
+    CHECK (pool.getVoice (0).startCount == 1);
+    pool.next();
+    CHECK (pool.getVoice (0).startCount == 2);
+    CHECK (near (pool.getVoice (0).velocity, 0.25f));
+
+    // Releasing a pending key before its delayed restart cancels it.
+    pool.noteOff (60);
+    pool.noteOn (60, 1.0f);
+    pool.noteOff (60);
+    pool.next();
+    pool.next();
+    CHECK (pool.getVoice (0).startCount == 2);
+
+    // Cmajor parity: oldest releasing is stolen before any held voice.
     pool.prepare (1000.0f);
     pool.noteOn (60, 1.0f);
     pool.noteOn (62, 1.0f);
@@ -819,6 +934,8 @@ void testVoicePool (TestContext& context)
     CHECK (pool.findVoiceForNote (60) == -1);
     CHECK (pool.findVoiceForNote (62) == 1);
 
+    // Cmajor parity: the oldest held voice is the final fallback. A different
+    // new note during a pending retrigger must still start immediately.
     pool.prepare (1000.0f);
     pool.noteOn (60, 1.0f);
     pool.noteOn (62, 1.0f);
@@ -827,21 +944,47 @@ void testVoicePool (TestContext& context)
     CHECK (pool.findVoiceForNote (67) == 0);
     CHECK (pool.findVoiceForNote (60) == -1);
 
+    pool.noteOff (62);
+    pool.noteOn (62, 1.0f);
+    pool.noteOn (69, 1.0f);
+    CHECK (pool.findVoiceForNote (69) >= 0);
+
     pool.allNotesOff();
-    CHECK (pool.getVoice (0).releaseCount == 1);
-    CHECK (pool.getVoice (1).releaseCount == 1);
-    CHECK (pool.getVoice (2).releaseCount == 1);
 
     for (int i = 0; i < 4; ++i)
         pool.next();
 
     CHECK (pool.getActiveVoiceCount() == 0);
 
+    pool.prepare (1000.0f);
     pool.noteOn (69, 1.0f);
     pool.noteOn (71, 1.0f);
     pool.forceReleaseAll();
-    CHECK (pool.getVoice (0).forcedReleaseCount == 1);
-    CHECK (pool.getVoice (1).forcedReleaseCount == 1);
+    CHECK (pool.getVoice (0).forcedReleaseCount
+           + pool.getVoice (1).forcedReleaseCount
+           + pool.getVoice (2).forcedReleaseCount == 2);
+
+    // Sustain mirrors the Cmajor PolyNoteGate: key-up is deferred until the
+    // pedal is released, without losing the held-note record.
+    pool.prepare (1000.0f);
+    pool.noteOn (72, 1.0f);
+    pool.setSustain (true);
+    pool.noteOff (72);
+    CHECK (! pool.isNoteHeld (72));
+    CHECK (pool.getVoice (0).releaseCount == 0);
+    pool.setSustain (false);
+    CHECK (pool.getVoice (0).releaseCount == 1);
+
+    // Both the note gate and allocator forget released identity after the
+    // same fixed ten-second window used by Nomad.
+    pool.prepare (10.0f);
+    pool.noteOn (74, 1.0f);
+    pool.noteOff (74);
+
+    for (int i = 0; i < 100; ++i)
+        pool.next();
+
+    CHECK (pool.findVoiceForNote (74) == -1);
 
     const auto allocationsBeforeExercise = allocationCount.load();
 
@@ -862,6 +1005,7 @@ static_assert (std::is_nothrow_default_constructible_v<chardsp::ADSREnvelope>);
 static_assert (std::is_nothrow_default_constructible_v<chardsp::StateVariableFilter>);
 static_assert (std::is_nothrow_default_constructible_v<chardsp::ColoredNoise>);
 static_assert (std::is_nothrow_default_constructible_v<chardsp::Downsampler4x>);
+static_assert (std::is_nothrow_default_constructible_v<chardsp::Oscillator>);
 static_assert (std::is_nothrow_default_constructible_v<
                chardsp::VoicePool<TestVoice, 4>>);
 
@@ -892,6 +1036,7 @@ int main()
     TestContext context;
     testSmoothedValue (context);
     testEllipticSaw (context);
+    testOscillator (context);
     testChocTriangleModulation (context);
     testADSREnvelopeParity (context);
     testADSREnvelopeBehavior (context);
