@@ -1,29 +1,37 @@
 #include <algorithm>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 
 #include "chardsp/chardsp_EllipticSawOscillator.h"
 #include "chardsp/chardsp_SmoothedValue.h"
+#include "choc/audio/choc_AudioFileFormat_WAV.h"
 #include "choc/audio/choc_SampleBuffers.h"
 
-int main()
+int main (int argc, const char* const* argv)
 {
     constexpr choc::buffer::ChannelCount channels = 2;
-    constexpr choc::buffer::FrameCount frames = 128;
-    constexpr float sampleRate = 48000.0f;
+    constexpr double sampleRate = 48000.0;
+    constexpr choc::buffer::FrameCount frames = 2 * 48000;
+    constexpr choc::buffer::FrameCount fadeFrames = 480;
+    const std::filesystem::path outputPath = argc > 1
+        ? argv[1] : "chardsp_render.wav";
 
     choc::buffer::ChannelArrayBuffer<float> buffer (channels, frames);
     auto view = buffer.getView();
     chardsp::EllipticSawOscillator oscillator;
     chardsp::SmoothedValue gain;
-    oscillator.prepare (sampleRate);
+    oscillator.prepare (static_cast<float> (sampleRate));
     oscillator.setFrequency (440.0f);
     gain.reset (0.0f);
-    gain.setTarget (0.5f, frames);
+    gain.setTarget (0.2f, fadeFrames);
 
     for (choc::buffer::FrameCount frame = 0; frame < frames; ++frame)
     {
+        if (frame == frames - fadeFrames)
+            gain.setTarget (0.0f, fadeFrames);
+
         const auto sample = oscillator.next() * gain.next();
 
         for (choc::buffer::ChannelCount channel = 0; channel < channels; ++channel)
@@ -39,11 +47,27 @@ int main()
         const auto sample = view.getSample (0, frame);
         minimum = std::min (minimum, sample);
         maximum = std::max (maximum, sample);
-        sum += sample;
+            sum += sample;
+    }
+
+    choc::audio::WAVAudioFileFormat<true> wavFormat;
+    choc::audio::AudioFileProperties properties;
+    properties.sampleRate = sampleRate;
+    properties.numFrames = frames;
+    properties.numChannels = channels;
+    properties.bitDepth = choc::audio::BitDepth::int16;
+    auto writer = wavFormat.createWriter (outputPath, properties);
+
+    if (writer == nullptr || ! writer->appendFrames (buffer.getView())
+        || ! writer->flush())
+    {
+        std::cerr << "Failed to write " << outputPath << '\n';
+        return 1;
     }
 
     std::cout << std::fixed << std::setprecision (9)
-              << "frames=" << frames
+              << "wrote=" << outputPath
+              << " frames=" << frames
               << " first=" << view.getSample (0, 0)
               << " middle=" << view.getSample (0, frames / 2)
               << " last=" << view.getSample (0, frames - 1)

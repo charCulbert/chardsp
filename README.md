@@ -58,8 +58,13 @@ library.
 cmake -S . -B build -DBUILD_TESTING=ON -DCHARDSP_BUILD_EXAMPLES=ON
 cmake --build build
 ctest --test-dir build --output-on-failure
-./build/examples/chardsp_buffer_render
+./build/examples/bufferRender/chardsp_buffer_render chardsp_render.wav
 ```
+
+The example renders two seconds of elliptic-BLEP saw DSP into a CHOC buffer,
+applies explicit fade-in and fade-out smoothing, and uses CHOC's WAV writer to
+create a 48 kHz, 16-bit stereo file. The output path is optional and defaults
+to `chardsp_render.wav`.
 
 Disable either optional surface with `-DBUILD_TESTING=OFF` or
 `-DCHARDSP_BUILD_EXAMPLES=OFF`. Dependency paths never change: missing
