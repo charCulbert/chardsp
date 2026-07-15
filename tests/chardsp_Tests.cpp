@@ -15,6 +15,7 @@
 #include "chardsp/chardsp_EllipticSawOscillator.h"
 #include "chardsp/chardsp_SmoothedValue.h"
 #include "chardsp/chardsp_StateVariableFilter.h"
+#include "chardsp/chardsp_VoicePool.h"
 #include "choc/audio/choc_Oscillators.h"
 
 namespace
@@ -711,10 +712,158 @@ void testDownsamplerBehavior (TestContext& context)
     CHECK (allocationCount.load() == allocationsBeforeRender);
 }
 
+struct TestVoice
+{
+    void prepare (float newSampleRate, size_t newVoiceIndex) noexcept
+    {
+        sampleRate = newSampleRate;
+        voiceIndex = newVoiceIndex;
+        note = -1;
+        startCount = 0;
+        releaseCount = 0;
+        forcedReleaseCount = 0;
+        releaseSamplesRemaining = 0;
+        active = false;
+    }
+
+    void start (int nextNote, float nextVelocity) noexcept
+    {
+        note = nextNote;
+        velocity = nextVelocity;
+        ++startCount;
+        releaseSamplesRemaining = 0;
+        active = true;
+    }
+
+    void release() noexcept
+    {
+        ++releaseCount;
+        releaseSamplesRemaining = 4;
+    }
+
+    void forceRelease (float seconds) noexcept
+    {
+        ++forcedReleaseCount;
+        lastForcedReleaseSeconds = seconds;
+        releaseSamplesRemaining = std::max (1,
+            static_cast<int> (seconds * sampleRate + 0.5f));
+    }
+
+    float next() noexcept
+    {
+        if (releaseSamplesRemaining > 0 && --releaseSamplesRemaining == 0)
+            active = false;
+
+        return active ? 0.1f : 0.0f;
+    }
+
+    bool isActive() const noexcept { return active; }
+
+    float sampleRate = 0.0f;
+    float velocity = 0.0f;
+    float lastForcedReleaseSeconds = 0.0f;
+    size_t voiceIndex = 0;
+    int note = -1;
+    int startCount = 0;
+    int releaseCount = 0;
+    int forcedReleaseCount = 0;
+    int releaseSamplesRemaining = 0;
+    bool active = false;
+};
+
+void testVoicePool (TestContext& context)
+{
+    using Pool = chardsp::VoicePool<TestVoice, 3>;
+    Pool pool;
+    pool.prepare (1000.0f);
+
+    pool.noteOn (60, 0.8f);
+    CHECK (pool.findVoiceForNote (60) == 0);
+    CHECK (pool.getVoice (0).startCount == 1);
+    CHECK (near (pool.getVoice (0).velocity, 0.8f));
+    CHECK (pool.getActiveVoiceCount() == 1);
+
+    pool.noteOn (60, 0.4f);
+    CHECK (pool.getVoice (0).startCount == 1);
+    pool.noteOn (62, 0.7f);
+    pool.noteOn (64, 0.6f);
+    CHECK (pool.getActiveVoiceCount() == 3);
+
+    pool.noteOff (62);
+    CHECK (pool.getVoice (1).releaseCount == 1);
+    pool.noteOn (62, 0.9f);
+    CHECK (pool.getVoice (1).forcedReleaseCount == 1);
+    CHECK (near (pool.getVoice (1).lastForcedReleaseSeconds, 0.002f));
+    CHECK (pool.getVoice (1).startCount == 1);
+    pool.next();
+    CHECK (pool.getVoice (1).startCount == 1);
+    pool.next();
+    CHECK (pool.getVoice (1).startCount == 2);
+    CHECK (pool.findVoiceForNote (62) == 1);
+
+    pool.prepare (1000.0f);
+    pool.noteOn (60, 1.0f);
+    pool.noteOff (60);
+    pool.noteOn (62, 1.0f);
+    CHECK (pool.findVoiceForNote (60) == 0);
+    CHECK (pool.findVoiceForNote (62) == 1);
+
+    pool.prepare (1000.0f);
+    pool.noteOn (60, 1.0f);
+    pool.noteOn (62, 1.0f);
+    pool.noteOn (64, 1.0f);
+    pool.noteOff (60);
+    pool.noteOff (62);
+    pool.noteOn (65, 1.0f);
+    CHECK (pool.findVoiceForNote (65) == 0);
+    CHECK (pool.findVoiceForNote (60) == -1);
+    CHECK (pool.findVoiceForNote (62) == 1);
+
+    pool.prepare (1000.0f);
+    pool.noteOn (60, 1.0f);
+    pool.noteOn (62, 1.0f);
+    pool.noteOn (64, 1.0f);
+    pool.noteOn (67, 1.0f);
+    CHECK (pool.findVoiceForNote (67) == 0);
+    CHECK (pool.findVoiceForNote (60) == -1);
+
+    pool.allNotesOff();
+    CHECK (pool.getVoice (0).releaseCount == 1);
+    CHECK (pool.getVoice (1).releaseCount == 1);
+    CHECK (pool.getVoice (2).releaseCount == 1);
+
+    for (int i = 0; i < 4; ++i)
+        pool.next();
+
+    CHECK (pool.getActiveVoiceCount() == 0);
+
+    pool.noteOn (69, 1.0f);
+    pool.noteOn (71, 1.0f);
+    pool.forceReleaseAll();
+    CHECK (pool.getVoice (0).forcedReleaseCount == 1);
+    CHECK (pool.getVoice (1).forcedReleaseCount == 1);
+
+    const auto allocationsBeforeExercise = allocationCount.load();
+
+    for (int event = 0; event < 100000; ++event)
+    {
+        pool.noteOn (event % 12, 0.75f);
+
+        if (event % 3 == 0)
+            pool.noteOff (event % 12);
+
+        pool.next();
+    }
+
+    CHECK (allocationCount.load() == allocationsBeforeExercise);
+}
+
 static_assert (std::is_nothrow_default_constructible_v<chardsp::ADSREnvelope>);
 static_assert (std::is_nothrow_default_constructible_v<chardsp::StateVariableFilter>);
 static_assert (std::is_nothrow_default_constructible_v<chardsp::ColoredNoise>);
 static_assert (std::is_nothrow_default_constructible_v<chardsp::Downsampler4x>);
+static_assert (std::is_nothrow_default_constructible_v<
+               chardsp::VoicePool<TestVoice, 4>>);
 
 } // namespace
 
@@ -753,6 +902,7 @@ int main()
     testColoredNoiseBehavior (context);
     testDownsamplerParity (context);
     testDownsamplerBehavior (context);
+    testVoicePool (context);
 
     if (context.failures == 0)
     {

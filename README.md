@@ -3,8 +3,8 @@
 `chardsp` is a small header-only collection of audio DSP primitives. It
 contains a finite linear smoother, a Signalsmith elliptic-BLEP saw oscillator,
 an ADSR envelope, a lowpass/highpass state-variable filter, a discrete
-colored-noise generator, and a 4x downsampler. It uses CHOC buffer views
-directly in block-oriented callers.
+colored-noise generator, a 4x downsampler, and release-aware voice-slot
+management. It uses CHOC buffer views directly in block-oriented callers.
 
 Runtime events, parameter schemas and state, MIDI mapping, scheduling,
 diagnostics transport, device hosting, UI, WebViews and command-line handling
@@ -46,6 +46,7 @@ Include headers directly:
 #include "chardsp/chardsp_StateVariableFilter.h"
 #include "chardsp/chardsp_ColoredNoise.h"
 #include "chardsp/chardsp_Downsampler4x.h"
+#include "chardsp/chardsp_VoicePool.h"
 ```
 
 Or add the repository and link its usage requirements:
@@ -86,9 +87,17 @@ independently.
   coefficients. `process()` accepts either four scalar oversamples or a
   `std::array<float, 4>`. It owns only fixed filter state and exposes no
   coefficient or oversampling policy.
+- `VoicePool<Voice, voiceCount>` owns a fixed array of the consumer's `Voice`
+  type and presents the small playable API: `prepare()`, `noteOn()`,
+  `noteOff()`, `allNotesOff()`, and `next()`. Internally it prefers a releasing
+  same-note voice, then a free voice, the oldest releasing voice, and finally
+  the oldest held voice. Re-pressing a released note applies Nomad's 2 ms
+  forced fade before the same slot restarts. Each instrument defines its own
+  allocation-free `Voice` DSP topology through the documented method contract;
+  no base class, virtual call, or runtime allocation is introduced.
 
-All four types are in `namespace chardsp`; their preparation, reset, parameter,
-and per-sample methods are `noexcept`.
+All five components are in `namespace chardsp`; their reset, parameter,
+allocation, and per-sample methods are `noexcept`.
 
 ## Build and test
 
@@ -99,7 +108,7 @@ ctest --test-dir build --output-on-failure
 ./build/examples/bufferRender/chardsp_buffer_render chardsp_render.wav
 ```
 
-The example renders two seconds of elliptic-BLEP saw DSP into a CHOC buffer,
+`bufferRender` remains the focused two-second elliptic-BLEP saw example. It
 applies explicit fade-in and fade-out smoothing, and uses CHOC's WAV writer to
 create a 48 kHz, 16-bit stereo file. The output path is optional and defaults
 to `chardsp_render.wav`.
