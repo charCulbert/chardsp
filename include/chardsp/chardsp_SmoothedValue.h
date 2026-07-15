@@ -1,21 +1,27 @@
 #pragma once
 
 #include <cstdint>
+#include <type_traits>
 
 namespace chardsp
 {
 
 // Finite linear ramp. Once settled, next() is only a branch and return.
+template <typename SampleType>
 struct SmoothedValue
 {
-    void reset (float value) noexcept
+    static_assert (std::is_same_v<SampleType, float>
+                   || std::is_same_v<SampleType, double>,
+                   "SmoothedValue supports float or double");
+
+    void reset (SampleType value) noexcept
     {
         current = target = value;
-        step = 0.0f;
+        step = SampleType {};
         samplesRemaining = 0;
     }
 
-    void setTarget (float value, uint32_t rampSamples) noexcept
+    void setTarget (SampleType value, uint32_t rampSamples) noexcept
     {
         target = value;
 
@@ -25,11 +31,11 @@ struct SmoothedValue
             return;
         }
 
-        step = (target - current) / static_cast<float> (rampSamples);
+        step = (target - current) / static_cast<SampleType> (rampSamples);
         samplesRemaining = rampSamples;
     }
 
-    float next() noexcept
+    SampleType next() noexcept
     {
         if (samplesRemaining != 0)
         {
@@ -42,12 +48,12 @@ struct SmoothedValue
         return current;
     }
 
-    float getCurrent() const noexcept { return current; }
+    SampleType getCurrent() const noexcept { return current; }
 
 private:
-    float current = 0.0f;
-    float target = 0.0f;
-    float step = 0.0f;
+    SampleType current = SampleType {};
+    SampleType target = SampleType {};
+    SampleType step = SampleType {};
     uint32_t samplesRemaining = 0;
 };
 

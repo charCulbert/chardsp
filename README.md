@@ -2,7 +2,7 @@
 
 `chardsp` is a small header-only collection of audio DSP primitives. It
 contains a finite linear smoother, a Signalsmith elliptic-BLEP saw oscillator,
-a five-waveform Nomad oscillator, an ADSR envelope, a lowpass/highpass
+a five-waveform Nomad oscillator, an ADSR envelope, a lowpass/bandpass/highpass
 state-variable filter, a discrete colored-noise generator, a 4x downsampler,
 and release-aware voice-slot management. It uses CHOC buffer views directly in
 block-oriented callers.
@@ -61,6 +61,16 @@ target_link_libraries(my_executable PRIVATE chardsp)
 `chardsp` is an `INTERFACE` target. It builds no reusable static or dynamic
 library.
 
+All sample-processing types are direct `float`/`double` templates. Select the
+precision at the use site, for example:
+
+```cpp
+chardsp::Oscillator<float> realtimeOscillator;
+chardsp::StateVariableFilter<double> analysisFilter;
+```
+
+There are no float-default or `Double` compatibility aliases.
+
 ## Nomad-derived primitives
 
 The following self-contained primitives preserve the active DSP equations from
@@ -68,28 +78,29 @@ The following self-contained primitives preserve the active DSP equations from
 Daisy or Nomad runtime dependency, allocate no memory, and can each be included
 independently.
 
-- `ADSREnvelope` provides finite-time exponential and linear attack, decay, and
+- `ADSREnvelope<SampleType>` provides finite-time exponential and linear attack, decay, and
   release stages. Stage-time, sustain, and shape changes take effect from the
   current level; `retrigger()` is discontinuity-free, while `trigger()` starts
   from zero. `forceRelease(seconds)` is a configurable linear fade. The peak is
   fixed at `1.0`; velocity curves and output scaling belong in the consumer.
-- `StateVariableFilter` is the two-integrator-loop TPT topology with selectable
-  `FilterMode::lowpass` and `FilterMode::highpass` output. `setCutoffAndQ()`
+- `StateVariableFilter<SampleType>` is the two-integrator-loop TPT topology
+  with selectable `FilterMode::lowpass`, `FilterMode::bandpass`, and
+  `FilterMode::highpass` output. `setCutoffAndQ()`
   applies coefficients immediately, clamps cutoff to `0` through
   `0.48 * sampleRate`, and gives Q a positive floor. Resonance percentages,
   note-domain modulation, smoothing, and periodic coefficient-update policy
   are deliberately outside the filter; compose those with `SmoothedValue` when
   needed.
-- `ColoredNoise` selects the exact brown, pink, white, or blue endpoint with
+- `ColoredNoise<SampleType>` selects the exact brown, pink, white, or blue endpoint with
   `NoiseColor`. `reset(seed)` makes the stream repeatable. Every endpoint state
   advances on every `next()` call, so changing color does not change the
   underlying deterministic timeline. Continuous color morphing and
   oscillator-level makeup gain are consumer policy.
-- `Downsampler4x` runs the original two-stage half-rate filter with its fixed
+- `Downsampler4x<SampleType>` runs the original two-stage half-rate filter with its fixed
   coefficients. `process()` accepts either four scalar oversamples or a
-  `std::array<float, 4>`. It owns only fixed filter state and exposes no
+  `std::array<SampleType, 4>`. It owns only fixed filter state and exposes no
   coefficient or oversampling policy.
-- `Oscillator` adds Nomad's pitched `saw`, `ramp`, `pulse`, `triangle`, and
+- `Oscillator<SampleType>` adds Nomad's pitched `saw`, `ramp`, `pulse`, `triangle`, and
   `sine` waveform/shape equations. It renders at 4x through `Downsampler4x` and
   exposes immediate waveform, frequency, shape, and phase-reset control.
   Nomad's hard sync, micro-drift, two-oscillator routing, and physical models
@@ -106,14 +117,19 @@ independently.
   A released slot remains allocated for exactly as long as its `Voice` reports
   `isActive()`: short releases become free promptly and long releases are never
   cut off by an allocator timeout. Pressure selects a free voice, the oldest
-  actually-releasing voice, then the oldest held voice. Re-pressing an active
-  release tail applies Nomad's 2 ms forced fade before that key restarts. Each
+  actually-releasing voice, then the oldest held voice. Every active voice
+  selected for stealing finishes a configurable forced fade before its pending
+  replacement starts; the default is 2 ms and `setStealFadeTime(0)` selects
+  immediate replacement. Pending state is fixed per voice slot. If a burst is
+  larger than the voice count while all slots are fading, newer events replace
+  the oldest pending starts, so the most recent keys win without an unbounded
+  event queue. A pending key's `stop()` cancels that future start. Each
   instrument defines its own allocation-free `Voice` DSP topology through the
   documented method contract; no base class, virtual call, or runtime
   allocation is introduced.
 
-All six Nomad-derived components are in `namespace chardsp`; their reset, parameter,
-allocation, and per-sample methods are `noexcept`.
+All components are in `namespace chardsp`; their reset, parameter, allocation,
+and per-sample methods are `noexcept`.
 
 ## Build and test
 
@@ -128,6 +144,10 @@ ctest --test-dir build --output-on-failure
 applies explicit fade-in and fade-out smoothing, and uses CHOC's WAV writer to
 create a 48 kHz, 16-bit stereo file. The output path is optional and defaults
 to `chardsp_render.wav`.
+
+The test executable uses CHOC's unit-test framework and includes Nomad parity
+vectors, float/double instantiation, filter-response checks, allocation checks,
+and sample-timed voice-stealing burst cases.
 
 Disable either optional surface with `-DBUILD_TESTING=OFF` or
 `-DCHARDSP_BUILD_EXAMPLES=OFF`. Dependency paths never change: missing

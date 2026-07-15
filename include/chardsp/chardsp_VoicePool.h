@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -13,9 +14,10 @@ namespace chardsp
 // Key is a small, caller-defined identity type. It can represent a MIDI
 // note/channel pair, an analog key, a sequencer event, or anything else with
 // equality comparison. Voice must provide:
-//   prepare (float sampleRate, size_t voiceIndex)
-//   start (const Key& key, float velocity)
-//   release(), forceRelease (float seconds), next(), and isActive()
+//   prepare (SampleType sampleRate, size_t voiceIndex)
+//   start (const Key& key, SampleType velocity)
+//   release(), forceRelease (SampleType seconds), next(), and isActive(),
+// where SampleType is the float or double returned by Voice::next().
 //
 // The pool deliberately stores only its fixed set of voice slots. Input
 // scanning, debounce, and physical-key history after a voice is stolen belong
@@ -35,13 +37,21 @@ struct VoicePool
                              == std::declval<const Key&>()),
                    "VoicePool Key equality must be noexcept");
 
-    static constexpr float sameKeyFadeSeconds = 0.002f;
+    using SampleType = std::remove_cv_t<std::remove_reference_t<
+        decltype (std::declval<Voice&>().next())>>;
 
-    void prepare (float newSampleRate) noexcept
+    static_assert (std::is_same_v<SampleType, float>
+                   || std::is_same_v<SampleType, double>,
+                   "Voice::next() must return float or double");
+
+    static constexpr SampleType defaultStealFadeSeconds =
+        static_cast<SampleType> (0.002);
+
+    void prepare (SampleType newSampleRate) noexcept
     {
         sampleRate = newSampleRate;
         voiceStates = {};
-        pending = {};
+        pendingStarts = {};
         sustainActive = false;
         nextAge = 1;
 
@@ -49,12 +59,22 @@ struct VoicePool
             voices[i].prepare (sampleRate, i);
     }
 
-    // Starts a caller-defined key. Repeated starts while that key still owns a
-    // held voice are ignored. Re-starting its retained release tail performs
-    // Nomad's 2 ms fade before using the same slot.
-    void start (const Key& key, float velocity) noexcept
+    // A non-zero time lets the selected old voice reach silence before its
+    // replacement starts. Zero selects immediate replacement.
+    void setStealFadeTime (SampleType seconds) noexcept
     {
-        if (pending.active && pending.key == key)
+        stealFadeSeconds = std::isfinite (seconds) && seconds > SampleType {}
+            ? seconds : SampleType {};
+    }
+
+    SampleType getStealFadeTime() const noexcept { return stealFadeSeconds; }
+
+    // Starts a caller-defined key. Repeated starts while that key still owns a
+    // held voice are ignored. If no slot is free, the selected old voice fades
+    // fully to silence before the pending key starts in that same slot.
+    void start (const Key& key, SampleType velocity) noexcept
+    {
+        if (findPendingVoice (key) >= 0)
             return;
 
         if (const auto existing = findAllocatedVoice (key); existing >= 0)
@@ -64,13 +84,7 @@ struct VoicePool
             if (voiceStates[index].keyHeld)
                 return;
 
-            forceReleaseVoice (index);
-
-            if (voiceStates[index].allocated)
-                scheduleSameKeyRetrigger (key, velocity);
-            else
-                startAllocatedVoice (key, velocity);
-
+            replaceVoice (index, key, velocity);
             return;
         }
 
@@ -81,9 +95,9 @@ struct VoicePool
     // voices were already stolen are harmless.
     void stop (const Key& key) noexcept
     {
-        if (pending.active && pending.key == key)
+        if (const auto pending = findPendingVoice (key); pending >= 0)
         {
-            pending.active = false;
+            pendingStarts[static_cast<size_t> (pending)] = {};
             return;
         }
 
@@ -112,7 +126,7 @@ struct VoicePool
 
     void allKeysOff() noexcept
     {
-        pending.active = false;
+        pendingStarts = {};
         sustainActive = false;
 
         for (size_t i = 0; i < voiceCount; ++i)
@@ -127,9 +141,9 @@ struct VoicePool
         }
     }
 
-    void forceReleaseAll (float seconds = sameKeyFadeSeconds) noexcept
+    void forceReleaseAll (SampleType seconds = defaultStealFadeSeconds) noexcept
     {
-        pending.active = false;
+        pendingStarts = {};
         sustainActive = false;
 
         for (size_t i = 0; i < voiceCount; ++i)
@@ -153,16 +167,18 @@ struct VoicePool
         }
     }
 
-    float next() noexcept
+    SampleType next() noexcept
     {
-        // Cmajor's note gate advances its delayed retrigger before the voices
-        // render this frame, so a completed 2 ms fade restarts sample-exactly.
-        advancePendingRetrigger();
-        float mix = 0.0f;
+        SampleType mix {};
 
         for (size_t i = 0; i < voiceCount; ++i)
+        {
             if (voiceStates[i].allocated || voices[i].isActive())
                 mix += voices[i].next();
+
+            if (pendingStarts[i].active && ! voices[i].isActive())
+                startPendingVoice (i);
+        }
 
         reclaimSilentVoices();
         return mix;
@@ -195,11 +211,17 @@ struct VoicePool
 
     int findVoice (const Key& key) const noexcept
     {
+        if (const auto pending = findPendingVoice (key); pending >= 0)
+            return pending;
+
         return findAllocatedVoice (key);
     }
 
     bool isKeyHeld (const Key& key) const noexcept
     {
+        if (findPendingVoice (key) >= 0)
+            return true;
+
         const auto voice = findHeldVoice (key);
         return voice >= 0;
     }
@@ -215,41 +237,81 @@ private:
         uint64_t age = 0;
     };
 
-    struct PendingRetrigger
+    struct PendingStart
     {
         Key key {};
-        float velocity = 0.0f;
-        float samplesRemaining = 0.0f;
+        SampleType velocity {};
+        uint64_t age = 0;
         bool active = false;
     };
 
-    float retriggerFadeSamples() const noexcept
-    {
-        const auto samples = sameKeyFadeSeconds * sampleRate;
-        return samples > 1.0f ? samples : 1.0f;
-    }
-
-    void startAllocatedVoice (const Key& key, float velocity) noexcept
+    void startAllocatedVoice (const Key& key, SampleType velocity) noexcept
     {
         const auto index = chooseVoice();
-        auto& state = voiceStates[index];
 
-        if (state.allocated && state.gate)
-            voices[index].release();
+        if (pendingStarts[index].active)
+        {
+            pendingStarts[index] = { key, velocity, nextAge++, true };
+            return;
+        }
+
+        if (voiceStates[index].allocated || voices[index].isActive())
+        {
+            replaceVoice (index, key, velocity);
+            return;
+        }
+
+        startVoice (index, key, velocity, nextAge++);
+    }
+
+    void startVoice (size_t index, const Key& key, SampleType velocity,
+                     uint64_t age) noexcept
+    {
+        auto& state = voiceStates[index];
 
         state.key = key;
         state.allocated = true;
         state.keyHeld = true;
         state.gate = true;
         state.releasing = false;
-        state.age = nextAge++;
+        state.age = age;
         voices[index].start (key, velocity);
+    }
+
+    void replaceVoice (size_t index, const Key& key,
+                       SampleType velocity) noexcept
+    {
+        const auto age = nextAge++;
+
+        if (stealFadeSeconds <= SampleType {} || ! voices[index].isActive())
+        {
+            if (voices[index].isActive())
+                voices[index].forceRelease (SampleType {});
+
+            pendingStarts[index] = {};
+            startVoice (index, key, velocity, age);
+            return;
+        }
+
+        voices[index].forceRelease (stealFadeSeconds);
+
+        if (! voices[index].isActive())
+        {
+            startVoice (index, key, velocity, age);
+            return;
+        }
+
+        auto& state = voiceStates[index];
+        state.keyHeld = false;
+        state.gate = false;
+        state.releasing = true;
+        pendingStarts[index] = { key, velocity, age, true };
     }
 
     size_t chooseVoice() const noexcept
     {
         for (size_t i = 0; i < voiceCount; ++i)
-            if (! voiceStates[i].allocated)
+            if (! voiceStates[i].allocated && ! pendingStarts[i].active)
                 return i;
 
         size_t selected = voiceCount;
@@ -259,7 +321,8 @@ private:
         {
             const auto& state = voiceStates[i];
 
-            if (state.releasing && state.age < oldestAge)
+            if (! pendingStarts[i].active && state.releasing
+                && state.age < oldestAge)
             {
                 selected = i;
                 oldestAge = state.age;
@@ -273,14 +336,30 @@ private:
 
         for (size_t i = 0; i < voiceCount; ++i)
         {
-            if (voiceStates[i].age < oldestAge)
+            if (! pendingStarts[i].active
+                && voiceStates[i].age < oldestAge)
             {
                 selected = i;
                 oldestAge = voiceStates[i].age;
             }
         }
 
-        return selected;
+        if (selected < voiceCount)
+            return selected;
+
+        oldestAge = std::numeric_limits<uint64_t>::max();
+
+        for (size_t i = 0; i < voiceCount; ++i)
+        {
+            if (pendingStarts[i].active
+                && pendingStarts[i].age < oldestAge)
+            {
+                selected = i;
+                oldestAge = pendingStarts[i].age;
+            }
+        }
+
+        return selected < voiceCount ? selected : size_t {};
     }
 
     void releaseVoice (size_t index) noexcept
@@ -294,48 +373,11 @@ private:
             state = {};
     }
 
-    void forceReleaseVoice (size_t index) noexcept
+    void startPendingVoice (size_t index) noexcept
     {
-        auto& state = voiceStates[index];
-        voices[index].forceRelease (sameKeyFadeSeconds);
-        state.keyHeld = false;
-        state.gate = false;
-        state.releasing = true;
-
-        if (! voices[index].isActive())
-            state = {};
-    }
-
-    void scheduleSameKeyRetrigger (const Key& key, float velocity) noexcept
-    {
-        pending.key = key;
-        pending.velocity = velocity;
-        pending.samplesRemaining = retriggerFadeSamples();
-        pending.active = true;
-    }
-
-    void advancePendingRetrigger() noexcept
-    {
-        if (! pending.active || (pending.samplesRemaining -= 1.0f) > 0.0f)
-            return;
-
-        const auto key = pending.key;
-        const auto velocity = pending.velocity;
-        pending.active = false;
-
-        if (const auto same = findAllocatedVoice (key); same >= 0)
-        {
-            const auto index = static_cast<size_t> (same);
-            auto& state = voiceStates[index];
-            state.keyHeld = true;
-            state.gate = true;
-            state.releasing = false;
-            state.age = nextAge++;
-            voices[index].start (key, velocity);
-            return;
-        }
-
-        startAllocatedVoice (key, velocity);
+        const auto pending = pendingStarts[index];
+        pendingStarts[index] = {};
+        startVoice (index, pending.key, pending.velocity, pending.age);
     }
 
     void releaseSustainedVoices() noexcept
@@ -352,7 +394,8 @@ private:
     void reclaimSilentVoices() noexcept
     {
         for (size_t i = 0; i < voiceCount; ++i)
-            if (voiceStates[i].allocated && ! voices[i].isActive())
+            if (! pendingStarts[i].active && voiceStates[i].allocated
+                && ! voices[i].isActive())
                 voiceStates[i] = {};
     }
 
@@ -362,9 +405,19 @@ private:
         {
             const auto& state = voiceStates[i];
 
-            if (state.allocated && state.key == key)
+            if (! pendingStarts[i].active && state.allocated
+                && state.key == key)
                 return static_cast<int> (i);
         }
+
+        return -1;
+    }
+
+    int findPendingVoice (const Key& key) const noexcept
+    {
+        for (size_t i = 0; i < voiceCount; ++i)
+            if (pendingStarts[i].active && pendingStarts[i].key == key)
+                return static_cast<int> (i);
 
         return -1;
     }
@@ -385,8 +438,9 @@ private:
 
     std::array<Voice, voiceCount> voices;
     std::array<VoiceState, voiceCount> voiceStates {};
-    PendingRetrigger pending;
-    float sampleRate = 48000.0f;
+    std::array<PendingStart, voiceCount> pendingStarts {};
+    SampleType sampleRate = static_cast<SampleType> (48000.0);
+    SampleType stealFadeSeconds = defaultStealFadeSeconds;
     uint64_t nextAge = 1;
     bool sustainActive = false;
 };

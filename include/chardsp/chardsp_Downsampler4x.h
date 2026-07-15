@@ -1,28 +1,35 @@
 #pragma once
 
 #include <array>
+#include <type_traits>
 
 namespace chardsp
 {
 
+template <typename SampleType>
 struct Downsampler4x
 {
+    static_assert (std::is_same_v<SampleType, float>
+                   || std::is_same_v<SampleType, double>,
+                   "Downsampler4x supports float or double");
+
     void reset() noexcept
     {
         for (auto& filter : filters)
             filter.reset();
     }
 
-    float process (float first, float second, float third, float fourth) noexcept
+    SampleType process (SampleType first, SampleType second,
+                        SampleType third, SampleType fourth) noexcept
     {
         filters[0].process (first, second, first);
         filters[0].process (third, fourth, third);
-        float output = 0.0f;
+        SampleType output {};
         filters[1].process (first, third, output);
         return output;
     }
 
-    float process (const std::array<float, 4>& samples) noexcept
+    SampleType process (const std::array<SampleType, 4>& samples) noexcept
     {
         return process (samples[0], samples[1], samples[2], samples[3]);
     }
@@ -32,18 +39,19 @@ private:
     {
         void reset() noexcept
         {
-            a0 = a1 = a2 = a3 = 0.0f;
-            b0 = b1 = b2 = b3 = 0.0f;
+            a0 = a1 = a2 = a3 = SampleType {};
+            b0 = b1 = b2 = b3 = SampleType {};
         }
 
-        void process (float firstInput, float secondInput, float& output) noexcept
+        void process (SampleType firstInput, SampleType secondInput,
+                      SampleType& output) noexcept
         {
-            const auto nextA1 = a0 + (secondInput - a1) * 0.039151598f;
-            const auto nextA2 = a1 + (nextA1 - a2) * 0.30264685f;
-            const auto nextA3 = a2 + (nextA2 - a3) * 0.6746159f;
-            const auto nextB1 = b0 + (firstInput - b1) * 0.14737712f;
-            const auto nextB2 = b1 + (nextB1 - b2) * 0.48246855f;
-            const auto nextB3 = b2 + (nextB2 - b3) * 0.883005f;
+            const auto nextA1 = a0 + (secondInput - a1) * static_cast<SampleType> (0.039151598);
+            const auto nextA2 = a1 + (nextA1 - a2) * static_cast<SampleType> (0.30264685);
+            const auto nextA3 = a2 + (nextA2 - a3) * static_cast<SampleType> (0.6746159);
+            const auto nextB1 = b0 + (firstInput - b1) * static_cast<SampleType> (0.14737712);
+            const auto nextB2 = b1 + (nextB1 - b2) * static_cast<SampleType> (0.48246855);
+            const auto nextB3 = b2 + (nextB2 - b3) * static_cast<SampleType> (0.883005);
 
             a0 = secondInput;
             a1 = nextA1;
@@ -53,17 +61,17 @@ private:
             b1 = nextB1;
             b2 = nextB2;
             b3 = nextB3;
-            output = (nextA3 + nextB3) * 0.5f;
+            output = (nextA3 + nextB3) * static_cast<SampleType> (0.5);
         }
 
-        float a0 = 0.0f;
-        float a1 = 0.0f;
-        float a2 = 0.0f;
-        float a3 = 0.0f;
-        float b0 = 0.0f;
-        float b1 = 0.0f;
-        float b2 = 0.0f;
-        float b3 = 0.0f;
+        SampleType a0 {};
+        SampleType a1 {};
+        SampleType a2 {};
+        SampleType a3 {};
+        SampleType b0 {};
+        SampleType b1 {};
+        SampleType b2 {};
+        SampleType b3 {};
     };
 
     std::array<HalfRateFilter, 2> filters {};

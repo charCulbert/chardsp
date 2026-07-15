@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <type_traits>
 
 #include "chardsp/chardsp_Downsampler4x.h"
 
@@ -21,26 +22,31 @@ enum class OscillatorWaveform
 // The five pitched waveform/shape equations from Nomad's oscillator, rendered
 // at 4x and passed through Nomad's fixed two-stage downsampler. Noise remains a
 // separate ColoredNoise source so a synth can mix it independently.
+template <typename SampleType>
 struct Oscillator
 {
-    void prepare (float newSampleRate) noexcept
+    static_assert (std::is_same_v<SampleType, float>
+                   || std::is_same_v<SampleType, double>,
+                   "Oscillator supports float or double");
+
+    void prepare (SampleType newSampleRate) noexcept
     {
         sampleRate = std::isfinite (newSampleRate) && newSampleRate > 0.0f
-            ? newSampleRate : 0.0f;
-        frequency = 0.0f;
-        phaseIncrement = 0.0f;
+            ? newSampleRate : SampleType {};
+        frequency = SampleType {};
+        phaseIncrement = SampleType {};
         waveform = OscillatorWaveform::saw;
-        shape = 0.0f;
+        shape = SampleType {};
         reset();
     }
 
-    void reset (float newPhase = 0.0f) noexcept
+    void reset (SampleType newPhase = SampleType {}) noexcept
     {
         phase = std::isfinite (newPhase)
-            ? newPhase - std::floor (newPhase) : 0.0f;
+            ? newPhase - std::floor (newPhase) : SampleType {};
 
-        if (phase < 0.0f)
-            phase += 1.0f;
+        if (phase < SampleType {})
+            phase += static_cast<SampleType> (1.0);
 
         cycleIndex = 0;
         downsampler.reset();
@@ -54,35 +60,39 @@ struct Oscillator
         waveform = nextWaveform;
     }
 
-    void setFrequency (float newFrequency) noexcept
+    void setFrequency (SampleType newFrequency) noexcept
     {
         if (! std::isfinite (newFrequency))
             newFrequency = newFrequency > 0.0f && sampleRate > 0.0f
-                ? sampleRate * 0.49f : 0.0f;
+                ? sampleRate * static_cast<SampleType> (0.49) : SampleType {};
 
-        frequency = sampleRate > 0.0f
-            ? std::clamp (newFrequency, 0.0f, sampleRate * 0.49f)
-            : 0.0f;
-        phaseIncrement = sampleRate > 0.0f
-            ? frequency / (sampleRate * 4.0f) : 0.0f;
+        frequency = sampleRate > SampleType {}
+            ? std::clamp (newFrequency, SampleType {},
+                          sampleRate * static_cast<SampleType> (0.49))
+            : SampleType {};
+        phaseIncrement = sampleRate > SampleType {}
+            ? frequency / (sampleRate * static_cast<SampleType> (4.0))
+            : SampleType {};
     }
 
-    void setShape (float nextShape) noexcept
+    void setShape (SampleType nextShape) noexcept
     {
         shape = std::isfinite (nextShape)
-            ? std::clamp (nextShape, 0.0f, 1.0f) : 0.0f;
+            ? std::clamp (nextShape, SampleType {},
+                          static_cast<SampleType> (1.0))
+            : SampleType {};
     }
 
     OscillatorWaveform getWaveform() const noexcept { return waveform; }
-    float getFrequency() const noexcept { return frequency; }
-    float getShape() const noexcept { return shape; }
+    SampleType getFrequency() const noexcept { return frequency; }
+    SampleType getShape() const noexcept { return shape; }
 
-    float next() noexcept
+    SampleType next() noexcept
     {
         if (phaseIncrement <= 0.0f)
-            return 0.0f;
+            return SampleType {};
 
-        std::array<float, 4> oversampled {};
+        std::array<SampleType, 4> oversampled {};
 
         for (auto& sample : oversampled)
         {
@@ -94,29 +104,35 @@ struct Oscillator
     }
 
 private:
-    static constexpr float twoPi = 6.28318530717958647692f;
+    static constexpr SampleType twoPi = static_cast<SampleType> (
+        6.28318530717958647692);
 
     void advancePhase() noexcept
     {
         phase += phaseIncrement;
 
-        if (phase >= 1.0f)
+        if (phase >= static_cast<SampleType> (1.0))
         {
-            phase -= 1.0f;
+            phase -= static_cast<SampleType> (1.0);
             ++cycleIndex;
         }
     }
 
-    float renderAt (float currentPhase) const noexcept
+    SampleType renderAt (SampleType currentPhase) const noexcept
     {
         switch (waveform)
         {
             case OscillatorWaveform::saw:
-                return renderSaw (currentPhase, shape * 2.0f);
+                return renderSaw (currentPhase,
+                                  shape * static_cast<SampleType> (2.0));
             case OscillatorWaveform::ramp:
-                return renderSaw (currentPhase, 2.0f + shape * 2.0f);
+                return renderSaw (currentPhase,
+                                  static_cast<SampleType> (2.0)
+                                      + shape * static_cast<SampleType> (2.0));
             case OscillatorWaveform::pulse:
-                return currentPhase < pulseWidth() ? 1.0f : -1.0f;
+                return currentPhase < pulseWidth()
+                    ? static_cast<SampleType> (1.0)
+                    : static_cast<SampleType> (-1.0);
             case OscillatorWaveform::triangle:
                 return mirrorFold (rawTriangle (currentPhase) * foldDrive());
             case OscillatorWaveform::sine:
@@ -124,78 +140,85 @@ private:
                                    * foldDrive());
         }
 
-        return 0.0f;
+        return SampleType {};
     }
 
-    float renderSaw (float currentPhase, float sawShape) const noexcept
+    SampleType renderSaw (SampleType currentPhase,
+                          SampleType sawShape) const noexcept
     {
-        const auto foldDepth = sawShape < 1.0f ? sawShape
-                             : sawShape < 2.0f ? 2.0f - sawShape
-                             : sawShape < 3.0f ? sawShape - 2.0f
-                                               : 4.0f - sawShape;
-        const auto tau = 1.0f - foldDepth;
-        const auto baseSign = sawShape < 1.0f || sawShape >= 3.0f
-            ? 1.0f : -1.0f;
-        const auto saw = baseSign * (1.0f - 2.0f * currentPhase);
+        const auto one = static_cast<SampleType> (1.0);
+        const auto two = static_cast<SampleType> (2.0);
+        const auto three = static_cast<SampleType> (3.0);
+        const auto four = static_cast<SampleType> (4.0);
+        const auto foldDepth = sawShape < one ? sawShape
+                             : sawShape < two ? two - sawShape
+                             : sawShape < three ? sawShape - two
+                                                : four - sawShape;
+        const auto tau = one - foldDepth;
+        const auto baseSign = sawShape < one || sawShape >= three ? one : -one;
+        const auto saw = baseSign * (one - two * currentPhase);
 
-        if (tau >= 0.999999f)
+        if (tau >= static_cast<SampleType> (0.999999))
             return saw;
 
-        const auto cyclePolarity = (cycleIndex & 1) == 0 ? -1.0f : 1.0f;
-        const auto polarity = sawShape < 2.0f
+        const auto cyclePolarity = (cycleIndex & 1) == 0 ? -one : one;
+        const auto polarity = sawShape < two
             ? cyclePolarity : -cyclePolarity;
         const auto folded = polarity * saw < -tau ? -saw : saw;
-        return (2.0f * folded - polarity * (1.0f - tau))
-             / (1.0f + tau);
+        return (two * folded - polarity * (one - tau)) / (one + tau);
     }
 
-    float pulseWidth() const noexcept
+    SampleType pulseWidth() const noexcept
     {
-        constexpr float edgeGuard = 0.02f;
-        return edgeGuard + shape * (1.0f - 2.0f * edgeGuard);
+        constexpr auto edgeGuard = static_cast<SampleType> (0.02);
+        return edgeGuard + shape * (static_cast<SampleType> (1.0)
+                                    - static_cast<SampleType> (2.0) * edgeGuard);
     }
 
-    float foldDrive() const noexcept
+    SampleType foldDrive() const noexcept
     {
-        return 1.0f + shape * 3.0f;
+        return static_cast<SampleType> (1.0)
+             + shape * static_cast<SampleType> (3.0);
     }
 
-    static float rawTriangle (float currentPhase) noexcept
+    static SampleType rawTriangle (SampleType currentPhase) noexcept
     {
-        return currentPhase < 0.5f
-            ? currentPhase * 4.0f - 1.0f
-            : 3.0f - currentPhase * 4.0f;
+        return currentPhase < static_cast<SampleType> (0.5)
+            ? currentPhase * static_cast<SampleType> (4.0)
+                - static_cast<SampleType> (1.0)
+            : static_cast<SampleType> (3.0)
+                - currentPhase * static_cast<SampleType> (4.0);
     }
 
-    static float mirrorFold (float value) noexcept
+    static SampleType mirrorFold (SampleType value) noexcept
     {
         auto folded = value;
 
-        if (folded > 1.0f)
+        if (folded > static_cast<SampleType> (1.0))
         {
-            folded = 2.0f - folded;
+            folded = static_cast<SampleType> (2.0) - folded;
 
-            if (folded < -1.0f)
-                folded = -2.0f - folded;
+            if (folded < static_cast<SampleType> (-1.0))
+                folded = static_cast<SampleType> (-2.0) - folded;
         }
-        else if (folded < -1.0f)
+        else if (folded < static_cast<SampleType> (-1.0))
         {
-            folded = -2.0f - folded;
+            folded = static_cast<SampleType> (-2.0) - folded;
 
-            if (folded > 1.0f)
-                folded = 2.0f - folded;
+            if (folded > static_cast<SampleType> (1.0))
+                folded = static_cast<SampleType> (2.0) - folded;
         }
 
         return folded;
     }
 
-    Downsampler4x downsampler;
+    Downsampler4x<SampleType> downsampler;
     OscillatorWaveform waveform = OscillatorWaveform::saw;
-    float sampleRate = 0.0f;
-    float frequency = 0.0f;
-    float phase = 0.0f;
-    float phaseIncrement = 0.0f;
-    float shape = 0.0f;
+    SampleType sampleRate {};
+    SampleType frequency {};
+    SampleType phase {};
+    SampleType phaseIncrement {};
+    SampleType shape {};
     int cycleIndex = 0;
 };
 

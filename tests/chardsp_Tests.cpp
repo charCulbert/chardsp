@@ -18,36 +18,23 @@
 #include "chardsp/chardsp_StateVariableFilter.h"
 #include "chardsp/chardsp_VoicePool.h"
 #include "choc/audio/choc_Oscillators.h"
+#include "choc/platform/choc_UnitTest.h"
 
 namespace
 {
 
 std::atomic<size_t> allocationCount { 0 };
 
-struct TestContext
-{
-    void check (bool condition, const char* expression, int line)
-    {
-        if (! condition)
-        {
-            ++failures;
-            std::cerr << "line " << line << ": " << expression << '\n';
-        }
-    }
-
-    int failures = 0;
-};
-
-#define CHECK(expression) context.check ((expression), #expression, __LINE__)
+#define CHECK(expression) CHOC_EXPECT_TRUE (expression)
 
 bool near (float actual, float expected, float tolerance = 0.000001f)
 {
     return std::abs (actual - expected) <= tolerance;
 }
 
-void testSmoothedValue (TestContext& context)
+void testSmoothedValue (choc::test::TestProgress& progress)
 {
-    chardsp::SmoothedValue value;
+    chardsp::SmoothedValue<float> value;
     CHECK (near (value.getCurrent(), 0.0f));
     CHECK (near (value.next(), 0.0f));
 
@@ -82,13 +69,13 @@ void testSmoothedValue (TestContext& context)
     CHECK (near (value.next(), -0.5f));
 }
 
-void testEllipticSaw (TestContext& context)
+void testEllipticSaw (choc::test::TestProgress& progress)
 {
-    chardsp::EllipticSawOscillator unprepared;
+    chardsp::EllipticSawOscillator<float> unprepared;
     unprepared.setFrequency (440.0f);
     CHECK (near (unprepared.next(), 0.0f));
 
-    chardsp::EllipticSawOscillator oscillator;
+    chardsp::EllipticSawOscillator<float> oscillator;
     oscillator.prepare (48000.0f);
     oscillator.setFrequency (0.0f);
 
@@ -122,8 +109,8 @@ void testEllipticSaw (TestContext& context)
     CHECK (near (oscillator.next(), 0.0f));
     CHECK (near (oscillator.next(), 0.0f));
 
-    chardsp::EllipticSawOscillator limited;
-    chardsp::EllipticSawOscillator explicitLimit;
+    chardsp::EllipticSawOscillator<float> limited;
+    chardsp::EllipticSawOscillator<float> explicitLimit;
     limited.prepare (48000.0f);
     explicitLimit.prepare (48000.0f);
     limited.setFrequency (std::numeric_limits<float>::infinity());
@@ -137,8 +124,8 @@ void testEllipticSaw (TestContext& context)
         CHECK (near (limitedSample, explicitSample));
     }
 
-    chardsp::EllipticSawOscillator oneRender;
-    chardsp::EllipticSawOscillator splitRender;
+    chardsp::EllipticSawOscillator<float> oneRender;
+    chardsp::EllipticSawOscillator<float> splitRender;
     oneRender.prepare (44100.0f);
     splitRender.prepare (44100.0f);
     oneRender.setFrequency (997.0f);
@@ -154,7 +141,7 @@ void testEllipticSaw (TestContext& context)
             CHECK (near (splitRender.next(), expected[i]));
 }
 
-void testOscillator (TestContext& context)
+void testOscillator (choc::test::TestProgress& progress)
 {
     constexpr std::array waveforms {
         chardsp::OscillatorWaveform::saw,
@@ -176,13 +163,13 @@ void testOscillator (TestContext& context)
            0.438298821f, 0.801043510f, 0.942837477f }}
     }};
 
-    chardsp::Oscillator unprepared;
+    chardsp::Oscillator<float> unprepared;
     unprepared.setFrequency (440.0f);
     CHECK (near (unprepared.next(), 0.0f));
 
     for (size_t waveform = 0; waveform < waveforms.size(); ++waveform)
     {
-        chardsp::Oscillator oscillator;
+        chardsp::Oscillator<float> oscillator;
         oscillator.prepare (48000.0f);
         oscillator.setWaveform (waveforms[waveform]);
         oscillator.setShape (0.0f);
@@ -193,8 +180,8 @@ void testOscillator (TestContext& context)
             CHECK (near (oscillator.next(), expected, 0.000002f));
     }
 
-    chardsp::Oscillator first;
-    chardsp::Oscillator second;
+    chardsp::Oscillator<float> first;
+    chardsp::Oscillator<float> second;
     first.prepare (44100.0f);
     second.prepare (44100.0f);
     first.setWaveform (chardsp::OscillatorWaveform::triangle);
@@ -225,7 +212,7 @@ void testOscillator (TestContext& context)
     CHECK (std::isfinite (first.next()));
 }
 
-void testChocTriangleModulation (TestContext& context)
+void testChocTriangleModulation (choc::test::TestProgress& progress)
 {
     choc::oscillator::Triangle<float> triangle;
     triangle.resetPhase();
@@ -263,7 +250,7 @@ void testChocTriangleModulation (TestContext& context)
         CHECK (near (fast[i], fast[i + 4]));
 }
 
-void testADSREnvelopeParity (TestContext& context)
+void testADSREnvelopeParity (choc::test::TestProgress& progress)
 {
     constexpr std::array<float, 12> exponentialReference {
         0.5758192539f, 0.8333333731f, 0.9484972358f, 1.000000119f,
@@ -278,7 +265,7 @@ void testADSREnvelopeParity (TestContext& context)
     const auto checkShape = [&] (chardsp::EnvelopeShape shape,
                                   const std::array<float, 12>& reference)
     {
-        chardsp::ADSREnvelope envelope;
+        chardsp::ADSREnvelope<float> envelope;
         envelope.prepare (8.0f);
         envelope.setAttack (0.5f);
         envelope.setDecay (0.5f);
@@ -304,9 +291,9 @@ void testADSREnvelopeParity (TestContext& context)
     checkShape (chardsp::EnvelopeShape::linear, linearReference);
 }
 
-void testADSREnvelopeBehavior (TestContext& context)
+void testADSREnvelopeBehavior (choc::test::TestProgress& progress)
 {
-    chardsp::ADSREnvelope envelope;
+    chardsp::ADSREnvelope<float> envelope;
     envelope.prepare (10.0f);
     envelope.setShape (chardsp::EnvelopeShape::linear);
     envelope.setAttack (0.3f);
@@ -377,9 +364,9 @@ void testADSREnvelopeBehavior (TestContext& context)
     CHECK (! envelope.isActive());
 }
 
-void testADSREnvelopeLiveUpdates (TestContext& context)
+void testADSREnvelopeLiveUpdates (choc::test::TestProgress& progress)
 {
-    chardsp::ADSREnvelope envelope;
+    chardsp::ADSREnvelope<float> envelope;
     envelope.prepare (10.0f);
     envelope.setShape (chardsp::EnvelopeShape::linear);
     envelope.setAttack (1.0f);
@@ -435,7 +422,7 @@ void testADSREnvelopeLiveUpdates (TestContext& context)
     CHECK (allocationCount.load() == allocationsBeforeRender);
 }
 
-void testStateVariableFilterParity (TestContext& context)
+void testStateVariableFilterParity (choc::test::TestProgress& progress)
 {
     constexpr std::array<float, 12> lowpassReference {
         0.0638653487f, 0.2221318334f, 0.3453536034f, 0.3475232124f,
@@ -447,11 +434,16 @@ void testStateVariableFilterParity (TestContext& context)
         -0.1340743452f, 0.01598238759f, 0.1219794974f, 0.1685767174f,
         0.1596950889f, 0.1123836935f, 0.04896689206f, -0.01006412879f
     };
+    constexpr std::array<float, 12> bandpassReference {
+        0.226449429f, 0.334721135f, 0.102190307f, -0.094497406f,
+        -0.214644892f, -0.247950276f, -0.209041018f, -0.127095711f,
+        -0.034513498f, 0.042220652f, 0.087726228f, 0.098697950f
+    };
 
     const auto checkMode = [&] (chardsp::FilterMode mode,
                                  const std::array<float, 12>& reference)
     {
-        chardsp::StateVariableFilter filter;
+        chardsp::StateVariableFilter<float> filter;
         filter.prepare (48000.0f);
         filter.setMode (mode);
         filter.setCutoffAndQ (4200.0f, 1.7f);
@@ -461,6 +453,7 @@ void testStateVariableFilterParity (TestContext& context)
     };
 
     checkMode (chardsp::FilterMode::lowpass, lowpassReference);
+    checkMode (chardsp::FilterMode::bandpass, bandpassReference);
     checkMode (chardsp::FilterMode::highpass, highpassReference);
 }
 
@@ -469,7 +462,7 @@ float filterSineRMS (float sampleRate,
                      float frequency,
                      chardsp::FilterMode mode)
 {
-    chardsp::StateVariableFilter filter;
+    chardsp::StateVariableFilter<float> filter;
     filter.prepare (sampleRate);
     filter.setMode (mode);
     filter.setCutoffAndQ (cutoff, 0.70710678f);
@@ -490,7 +483,7 @@ float filterSineRMS (float sampleRate,
     return static_cast<float> (std::sqrt (sumSquares / measuredSamples));
 }
 
-void testStateVariableFilterBehavior (TestContext& context)
+void testStateVariableFilterBehavior (choc::test::TestProgress& progress)
 {
     for (const auto sampleRate : { 44100.0f, 48000.0f, 96000.0f })
     {
@@ -502,26 +495,40 @@ void testStateVariableFilterBehavior (TestContext& context)
                                                 chardsp::FilterMode::highpass);
         const auto highpassHigh = filterSineRMS (sampleRate, 1000.0f, 12000.0f,
                                                  chardsp::FilterMode::highpass);
+        const auto bandpassLow = filterSineRMS (sampleRate, 1000.0f, 200.0f,
+                                                chardsp::FilterMode::bandpass);
+        const auto bandpassCenter = filterSineRMS (sampleRate, 1000.0f, 1000.0f,
+                                                   chardsp::FilterMode::bandpass);
+        const auto bandpassHigh = filterSineRMS (sampleRate, 1000.0f, 12000.0f,
+                                                 chardsp::FilterMode::bandpass);
         CHECK (lowpassLow > 0.65f);
         CHECK (lowpassHigh < 0.02f);
         CHECK (highpassLow < 0.04f);
         CHECK (highpassHigh > 0.65f);
+        CHECK (bandpassLow < 0.16f);
+        CHECK (bandpassCenter > 0.48f);
+        CHECK (bandpassHigh < 0.07f);
     }
 
-    chardsp::StateVariableFilter first;
-    chardsp::StateVariableFilter second;
+    chardsp::StateVariableFilter<float> first;
+    chardsp::StateVariableFilter<float> second;
+    chardsp::StateVariableFilter<float> bandpass;
     first.prepare (48000.0f);
     second.prepare (48000.0f);
+    bandpass.prepare (48000.0f);
     first.setMode (chardsp::FilterMode::lowpass);
     second.setMode (chardsp::FilterMode::highpass);
+    bandpass.setMode (chardsp::FilterMode::bandpass);
     first.setCutoffAndQ (3000.0f, 0.9f);
     second.setCutoffAndQ (3000.0f, 0.9f);
+    bandpass.setCutoffAndQ (3000.0f, 0.9f);
 
     for (int i = 0; i < 128; ++i)
     {
         const auto input = std::sin (0.17f * static_cast<float> (i));
         first.process (input);
         second.process (input);
+        bandpass.process (input);
     }
 
     first.setMode (chardsp::FilterMode::highpass);
@@ -531,8 +538,13 @@ void testStateVariableFilterBehavior (TestContext& context)
     second.reset();
     CHECK (near (first.process (1.0f), second.process (1.0f)));
 
-    chardsp::StateVariableFilter clamped;
-    chardsp::StateVariableFilter explicitLimits;
+    first.reset();
+    bandpass.reset();
+    first.setMode (chardsp::FilterMode::bandpass);
+    CHECK (near (first.process (1.0f), bandpass.process (1.0f)));
+
+    chardsp::StateVariableFilter<float> clamped;
+    chardsp::StateVariableFilter<float> explicitLimits;
     clamped.prepare (48000.0f);
     explicitLimits.prepare (48000.0f);
     clamped.setCutoffAndQ (-100.0f, -5.0f);
@@ -548,7 +560,7 @@ void testStateVariableFilterBehavior (TestContext& context)
         CHECK (near (clamped.process (i == 0 ? 1.0f : 0.0f),
                      explicitLimits.process (i == 0 ? 1.0f : 0.0f)));
 
-    chardsp::StateVariableFilter silence;
+    chardsp::StateVariableFilter<float> silence;
     silence.prepare (96000.0f);
     silence.setCutoffAndQ (20000.0f, 0.5f);
     bool stableSilence = true;
@@ -571,7 +583,7 @@ void testStateVariableFilterBehavior (TestContext& context)
     CHECK (allocationCount.load() == allocationsBeforeRender);
 }
 
-void testColoredNoiseParity (TestContext& context)
+void testColoredNoiseParity (choc::test::TestProgress& progress)
 {
     constexpr std::array<std::array<float, 8>, 4> references {{
         {{ 0.01566551067f, 0.008858673275f, 0.01390580833f, 0.02395696566f,
@@ -592,7 +604,7 @@ void testColoredNoiseParity (TestContext& context)
 
     for (size_t color = 0; color < colors.size(); ++color)
     {
-        chardsp::ColoredNoise noise;
+        chardsp::ColoredNoise<float> noise;
         noise.reset (0x12345678u);
         noise.setColor (colors[color]);
 
@@ -601,9 +613,9 @@ void testColoredNoiseParity (TestContext& context)
     }
 }
 
-void testColoredNoiseBehavior (TestContext& context)
+void testColoredNoiseBehavior (choc::test::TestProgress& progress)
 {
-    chardsp::ColoredNoise noise;
+    chardsp::ColoredNoise<float> noise;
     noise.setColor (chardsp::NoiseColor::pink);
     noise.reset (42);
     std::array<float, 64> firstRender {};
@@ -616,7 +628,7 @@ void testColoredNoiseBehavior (TestContext& context)
     for (const auto expected : firstRender)
         CHECK (near (noise.next(), expected));
 
-    std::array<chardsp::ColoredNoise, 4> fixedColors;
+    std::array<chardsp::ColoredNoise<float>, 4> fixedColors;
     constexpr std::array<chardsp::NoiseColor, 4> colors {
         chardsp::NoiseColor::brown,
         chardsp::NoiseColor::pink,
@@ -630,7 +642,7 @@ void testColoredNoiseBehavior (TestContext& context)
         fixedColors[i].setColor (colors[i]);
     }
 
-    chardsp::ColoredNoise switching;
+    chardsp::ColoredNoise<float> switching;
     switching.reset (99);
 
     for (int i = 0; i < 256; ++i)
@@ -675,14 +687,14 @@ void testColoredNoiseBehavior (TestContext& context)
     CHECK (allocationCount.load() == allocationsBeforeRender);
 }
 
-void testDownsamplerParity (TestContext& context)
+void testDownsamplerParity (choc::test::TestProgress& progress)
 {
     constexpr std::array<float, 12> reference {
         0.002049217699f, 0.04932555556f, 0.1835883409f, 0.07104226947f,
         -0.1017052084f, 0.07502372563f, -0.04592199996f, 0.0247429572f,
         -0.01101632882f, 0.002590026706f, 0.002369836438f, -0.005135977641f
     };
-    chardsp::Downsampler4x downsampler;
+    chardsp::Downsampler4x<float> downsampler;
 
     for (size_t i = 0; i < reference.size(); ++i)
         CHECK (near (downsampler.process (i == 0 ? 1.0f : 0.0f,
@@ -697,7 +709,7 @@ float downsampledSineRMS (float frequency)
     constexpr float oversampledRate = 192000.0f;
     constexpr int discardedOutputs = 4096;
     constexpr int measuredOutputs = 8192;
-    chardsp::Downsampler4x downsampler;
+    chardsp::Downsampler4x<float> downsampler;
     double sumSquares = 0.0;
 
     for (int outputIndex = 0; outputIndex < discardedOutputs + measuredOutputs;
@@ -722,10 +734,10 @@ float downsampledSineRMS (float frequency)
     return static_cast<float> (std::sqrt (sumSquares / measuredOutputs));
 }
 
-void testDownsamplerBehavior (TestContext& context)
+void testDownsamplerBehavior (choc::test::TestProgress& progress)
 {
-    chardsp::Downsampler4x scalar;
-    chardsp::Downsampler4x array;
+    chardsp::Downsampler4x<float> scalar;
+    chardsp::Downsampler4x<float> array;
 
     for (int i = 0; i < 1024; ++i)
     {
@@ -782,6 +794,75 @@ void testDownsamplerBehavior (TestContext& context)
 
     CHECK (allFinite);
     CHECK (allocationCount.load() == allocationsBeforeRender);
+}
+
+void testDoublePrecisionTypes (choc::test::TestProgress& progress)
+{
+    static_assert (std::is_same_v<
+        decltype (std::declval<chardsp::SmoothedValue<double>&>().next()),
+        double>);
+    static_assert (std::is_same_v<
+        decltype (std::declval<chardsp::ADSREnvelope<double>&>().next()),
+        double>);
+    static_assert (std::is_same_v<
+        decltype (std::declval<chardsp::Oscillator<double>&>().next()),
+        double>);
+
+    chardsp::SmoothedValue<double> smoother;
+    smoother.reset (0.0);
+    smoother.setTarget (1.0, 4);
+    CHECK (std::abs (smoother.next() - 0.25) < 1.0e-12);
+
+    chardsp::ADSREnvelope<double> envelope;
+    envelope.prepare (48000.0);
+    envelope.setAttack (0.001);
+    envelope.setDecay (0.002);
+    envelope.setSustain (0.4);
+    envelope.setRelease (0.003);
+    envelope.trigger();
+
+    chardsp::StateVariableFilter<double> filter;
+    filter.prepare (48000.0);
+    filter.setMode (chardsp::FilterMode::bandpass);
+    filter.setCutoffAndQ (2000.0, 0.8);
+
+    chardsp::ColoredNoise<double> noise;
+    noise.reset (0x12345678u);
+    noise.setColor (chardsp::NoiseColor::pink);
+
+    chardsp::Downsampler4x<double> downsampler;
+    chardsp::Oscillator<double> oscillator;
+    oscillator.prepare (48000.0);
+    oscillator.setWaveform (chardsp::OscillatorWaveform::triangle);
+    oscillator.setFrequency (440.0);
+
+    chardsp::EllipticSawOscillator<double> ellipticSaw;
+    ellipticSaw.prepare (48000.0);
+    ellipticSaw.setFrequency (440.0);
+
+    const auto allocationsBeforeRender = allocationCount.load();
+    bool allFinite = true;
+
+    for (int i = 0; i < 20000; ++i)
+    {
+        if (i == 10000)
+            envelope.release();
+
+        const auto excitation = oscillator.next() + noise.next() * 0.1;
+        const auto filtered = filter.process (excitation) * envelope.next();
+        const auto downsampled = downsampler.process (
+            filtered, filtered * 0.5, -filtered * 0.25, filtered * 0.125);
+        allFinite = allFinite && std::isfinite (downsampled)
+                   && std::isfinite (ellipticSaw.next());
+    }
+
+    CHECK (allFinite);
+    CHECK (allocationCount.load() == allocationsBeforeRender);
+
+    noise.reset (77);
+    const auto expectedNoise = noise.next();
+    noise.reset (77);
+    CHECK (noise.next() == expectedNoise);
 }
 
 struct TestVoice
@@ -879,7 +960,7 @@ struct SourceVoice : TestVoice
     float frequency = 0.0f;
 };
 
-void testVoicePool (TestContext& context)
+void testVoicePool (choc::test::TestProgress& progress)
 {
     using Pool = chardsp::VoicePool<TestVoice, 3>;
     Pool pool;
@@ -909,6 +990,8 @@ void testVoicePool (TestContext& context)
     CHECK (pool.getVoice (1).startCount == 1);
     pool.next();
     CHECK (pool.getVoice (1).startCount == 2);
+    CHECK (pool.getVoice (1).lastRenderedStartCount == 1);
+    pool.next();
     CHECK (pool.getVoice (1).lastRenderedStartCount == 2);
     CHECK (pool.findVoice (62) == 1);
 
@@ -950,6 +1033,9 @@ void testVoicePool (TestContext& context)
     CHECK (pool.getVoice (0).startCount == 1);
     pool.next();
     CHECK (pool.getVoice (0).startCount == 2);
+    CHECK (pool.getVoice (0).lastRenderedStartCount == 1);
+    pool.next();
+    CHECK (pool.getVoice (0).lastRenderedStartCount == 2);
     CHECK (near (pool.getVoice (0).velocity, 0.25f));
 
     // Releasing a pending key before its delayed restart cancels it.
@@ -960,7 +1046,115 @@ void testVoicePool (TestContext& context)
     pool.next();
     CHECK (pool.getVoice (0).startCount == 2);
 
-    // Cmajor parity: oldest releasing is stolen before any held voice.
+    // Any stolen voice uses the same delayed fade, not only same-key
+    // retriggers. The new voice starts after the old voice reports silence.
+    using SingleVoicePool = chardsp::VoicePool<TestVoice, 1>;
+    SingleVoicePool single;
+    single.prepare (1000.0f);
+    single.start (60, 1.0f);
+    single.start (67, 0.5f);
+    CHECK (single.findVoice (60) == -1);
+    CHECK (single.findVoice (67) == 0);
+    CHECK (single.getVoice (0).forcedReleaseCount == 1);
+    CHECK (near (single.getVoice (0).lastForcedReleaseSeconds, 0.002f));
+    single.next();
+    CHECK (single.getVoice (0).startCount == 1);
+    single.next();
+    CHECK (single.getVoice (0).startCount == 2);
+    CHECK (single.getVoice (0).lastRenderedStartCount == 1);
+    single.next();
+    CHECK (single.getVoice (0).lastRenderedStartCount == 2);
+
+    // The steal fade is configurable, and zero selects immediate replacement.
+    single.prepare (1000.0f);
+    single.setStealFadeTime (0.004f);
+    CHECK (near (single.getStealFadeTime(), 0.004f));
+    single.start (60, 1.0f);
+    single.start (62, 1.0f);
+
+    for (int i = 0; i < 3; ++i)
+    {
+        single.next();
+        CHECK (single.getVoice (0).startCount == 1);
+    }
+
+    single.next();
+    CHECK (single.getVoice (0).startCount == 2);
+    single.setStealFadeTime (0.0f);
+    single.start (64, 1.0f);
+    CHECK (single.getVoice (0).startCount == 3);
+    CHECK (near (single.getVoice (0).lastForcedReleaseSeconds, 0.0f));
+    single.setStealFadeTime (std::numeric_limits<float>::quiet_NaN());
+    CHECK (near (single.getStealFadeTime(), 0.0f));
+
+    // Each slot owns its pending start. Fast notes can therefore fade multiple
+    // stolen voices concurrently without a shared timer or heap allocation.
+    using PairPool = chardsp::VoicePool<TestVoice, 2>;
+    PairPool pair;
+    pair.prepare (1000.0f);
+    pair.start (60, 1.0f);
+    pair.start (62, 1.0f);
+    pair.start (64, 1.0f);
+    pair.start (65, 1.0f);
+    CHECK (pair.findVoice (64) == 0);
+    CHECK (pair.findVoice (65) == 1);
+    CHECK (pair.getVoice (0).startCount == 1);
+    CHECK (pair.getVoice (1).startCount == 1);
+    pair.next();
+    pair.next();
+    CHECK (pair.getVoice (0).startCount == 2);
+    CHECK (pair.getVoice (1).startCount == 2);
+
+    // When every slot is already fading, the latest note replaces the oldest
+    // pending start without restarting the old voice's fade.
+    pair.prepare (1000.0f);
+    pair.start (60, 1.0f);
+    pair.start (62, 1.0f);
+    pair.start (64, 1.0f);
+    pair.start (65, 1.0f);
+    pair.start (67, 1.0f);
+    CHECK (pair.findVoice (64) == -1);
+    CHECK (pair.findVoice (67) == 0);
+    CHECK (pair.getVoice (0).forcedReleaseCount == 1);
+
+    // A burst much larger than the voice count stays bounded. With two slots,
+    // the two newest pending keys survive until the original voices go silent.
+    pair.prepare (1000.0f);
+    pair.start (60, 1.0f);
+    pair.start (62, 1.0f);
+
+    for (int note = 64; note < 84; ++note)
+        pair.start (note, 1.0f);
+
+    CHECK (pair.getActiveVoiceCount() == 2);
+    CHECK (pair.getAllocatedVoiceCount() == 2);
+    CHECK (pair.findVoice (82) >= 0);
+    CHECK (pair.findVoice (83) >= 0);
+
+    for (int note = 64; note < 82; ++note)
+        CHECK (pair.findVoice (note) == -1);
+
+    pair.next();
+    pair.next();
+    CHECK ((pair.getVoice (0).note == 82
+            && pair.getVoice (1).note == 83)
+           || (pair.getVoice (0).note == 83
+               && pair.getVoice (1).note == 82));
+    CHECK (pair.getVoice (0).startCount == 2);
+    CHECK (pair.getVoice (1).startCount == 2);
+
+    // A note-off received while a note is pending cancels its future start.
+    single.prepare (1000.0f);
+    single.setStealFadeTime (0.002f);
+    single.start (60, 1.0f);
+    single.start (62, 1.0f);
+    single.stop (62);
+    single.next();
+    single.next();
+    CHECK (single.getVoice (0).startCount == 1);
+    CHECK (single.findVoice (62) == -1);
+
+    // The priority order remains oldest releasing, then oldest held.
     pool.prepare (1000.0f);
     pool.start (60, 1.0f);
     pool.start (62, 1.0f);
@@ -972,8 +1166,8 @@ void testVoicePool (TestContext& context)
     CHECK (pool.findVoice (60) == -1);
     CHECK (pool.findVoice (62) == 1);
 
-    // Cmajor parity: the oldest held voice is the final fallback. A different
-    // new note during a pending retrigger must still start immediately.
+    // The oldest held voice is the final fallback. Additional fast notes can
+    // reserve other slots while earlier stolen voices are still fading.
     pool.prepare (1000.0f);
     pool.start (60, 1.0f);
     pool.start (62, 1.0f);
@@ -1065,11 +1259,11 @@ void testVoicePool (TestContext& context)
     CHECK (allocationCount.load() == allocationsBeforeExercise);
 }
 
-static_assert (std::is_nothrow_default_constructible_v<chardsp::ADSREnvelope>);
-static_assert (std::is_nothrow_default_constructible_v<chardsp::StateVariableFilter>);
-static_assert (std::is_nothrow_default_constructible_v<chardsp::ColoredNoise>);
-static_assert (std::is_nothrow_default_constructible_v<chardsp::Downsampler4x>);
-static_assert (std::is_nothrow_default_constructible_v<chardsp::Oscillator>);
+static_assert (std::is_nothrow_default_constructible_v<chardsp::ADSREnvelope<float>>);
+static_assert (std::is_nothrow_default_constructible_v<chardsp::StateVariableFilter<float>>);
+static_assert (std::is_nothrow_default_constructible_v<chardsp::ColoredNoise<float>>);
+static_assert (std::is_nothrow_default_constructible_v<chardsp::Downsampler4x<float>>);
+static_assert (std::is_nothrow_default_constructible_v<chardsp::Oscillator<float>>);
 static_assert (std::is_nothrow_default_constructible_v<
                chardsp::VoicePool<TestVoice, 4>>);
 
@@ -1097,28 +1291,25 @@ void operator delete[] (void* memory, std::size_t) noexcept { std::free (memory)
 
 int main()
 {
-    TestContext context;
-    testSmoothedValue (context);
-    testEllipticSaw (context);
-    testOscillator (context);
-    testChocTriangleModulation (context);
-    testADSREnvelopeParity (context);
-    testADSREnvelopeBehavior (context);
-    testADSREnvelopeLiveUpdates (context);
-    testStateVariableFilterParity (context);
-    testStateVariableFilterBehavior (context);
-    testColoredNoiseParity (context);
-    testColoredNoiseBehavior (context);
-    testDownsamplerParity (context);
-    testDownsamplerBehavior (context);
-    testVoicePool (context);
+    choc::test::TestProgress progress;
+    CHOC_CATEGORY (chardsp);
 
-    if (context.failures == 0)
-    {
-        std::cout << "chardsp tests: all checks passed\n";
-        return 0;
-    }
+    { CHOC_TEST (smoothed_value); testSmoothedValue (progress); }
+    { CHOC_TEST (elliptic_saw); testEllipticSaw (progress); }
+    { CHOC_TEST (oscillator); testOscillator (progress); }
+    { CHOC_TEST (choc_triangle_modulation); testChocTriangleModulation (progress); }
+    { CHOC_TEST (adsr_nomad_parity); testADSREnvelopeParity (progress); }
+    { CHOC_TEST (adsr_behavior); testADSREnvelopeBehavior (progress); }
+    { CHOC_TEST (adsr_live_updates); testADSREnvelopeLiveUpdates (progress); }
+    { CHOC_TEST (svf_nomad_parity); testStateVariableFilterParity (progress); }
+    { CHOC_TEST (svf_behavior); testStateVariableFilterBehavior (progress); }
+    { CHOC_TEST (colored_noise_nomad_parity); testColoredNoiseParity (progress); }
+    { CHOC_TEST (colored_noise_behavior); testColoredNoiseBehavior (progress); }
+    { CHOC_TEST (downsampler_nomad_parity); testDownsamplerParity (progress); }
+    { CHOC_TEST (downsampler_behavior); testDownsamplerBehavior (progress); }
+    { CHOC_TEST (double_precision_types); testDoublePrecisionTypes (progress); }
+    { CHOC_TEST (voice_pool); testVoicePool (progress); }
 
-    std::cerr << "chardsp tests: " << context.failures << " checks failed\n";
-    return 1;
+    progress.printReport();
+    return progress.numFails == 0 ? 0 : 1;
 }

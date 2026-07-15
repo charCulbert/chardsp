@@ -20,8 +20,8 @@ int main (int argc, const char* const* argv)
 
     choc::buffer::ChannelArrayBuffer<float> buffer (channels, frames);
     auto view = buffer.getView();
-    chardsp::EllipticSawOscillator oscillator;
-    chardsp::SmoothedValue gain;
+    chardsp::EllipticSawOscillator<float> oscillator;
+    chardsp::SmoothedValue<float> gain;
     oscillator.prepare (static_cast<float> (sampleRate));
     oscillator.setFrequency (440.0f);
     gain.reset (0.0f);

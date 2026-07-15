@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
 
 namespace chardsp
 {
@@ -13,9 +14,14 @@ enum class EnvelopeShape
 };
 
 // Finite-time ADSR with stages that may be edited while they are running.
+template <typename SampleType>
 struct ADSREnvelope
 {
-    void prepare (float newSampleRate) noexcept
+    static_assert (std::is_same_v<SampleType, float>
+                   || std::is_same_v<SampleType, double>,
+                   "ADSREnvelope supports float or double");
+
+    void prepare (SampleType newSampleRate) noexcept
     {
         sampleRate = std::isfinite (newSampleRate) && newSampleRate > 0.0f
             ? newSampleRate
@@ -39,7 +45,7 @@ struct ADSREnvelope
         stage = Stage::idle;
     }
 
-    void setAttack (float seconds) noexcept
+    void setAttack (SampleType seconds) noexcept
     {
         attackSeconds = sanitiseSeconds (seconds);
         attackFactor = secondsToExponentialFactor (attackSeconds, attackCompletionRatio);
@@ -48,7 +54,7 @@ struct ADSREnvelope
             beginAttack();
     }
 
-    void setDecay (float seconds) noexcept
+    void setDecay (SampleType seconds) noexcept
     {
         decaySeconds = sanitiseSeconds (seconds);
         decayFactor = secondsToExponentialFactor (decaySeconds, envelopeCompletionRatio);
@@ -57,17 +63,17 @@ struct ADSREnvelope
             beginDecay();
     }
 
-    void setSustain (float nextLevel) noexcept
+    void setSustain (SampleType nextLevel) noexcept
     {
         sustainLevel = std::isfinite (nextLevel)
-            ? std::clamp (nextLevel, 0.0f, 1.0f)
-            : 0.0f;
+            ? std::clamp (nextLevel, SampleType {}, static_cast<SampleType> (1.0))
+            : SampleType {};
 
         if (stage == Stage::decay)
             beginDecay();
     }
 
-    void setRelease (float seconds) noexcept
+    void setRelease (SampleType seconds) noexcept
     {
         releaseSeconds = sanitiseSeconds (seconds);
         releaseFactor = secondsToExponentialFactor (releaseSeconds, releaseCompletionRatio);
@@ -106,7 +112,7 @@ struct ADSREnvelope
     }
 
     // Forced release is always linear, independent of the envelope shape.
-    void forceRelease (float seconds) noexcept
+    void forceRelease (SampleType seconds) noexcept
     {
         level = 0.0f;
         stageTarget = 0.0f;
@@ -126,7 +132,7 @@ struct ADSREnvelope
         stage = Stage::forcedRelease;
     }
 
-    float next() noexcept
+    SampleType next() noexcept
     {
         if (stage == Stage::decay && stageDifference == 0.0f)
             return current;
@@ -151,9 +157,11 @@ struct ADSREnvelope
         else if (stage == Stage::forcedRelease)
         {
             if (stageDifference > 0.0f)
-                stageDifference = std::max (0.0f, stageDifference - forcedReleaseStep);
+                stageDifference = std::max (SampleType {},
+                                            stageDifference - forcedReleaseStep);
             else
-                stageDifference = std::min (0.0f, stageDifference + forcedReleaseStep);
+                stageDifference = std::min (SampleType {},
+                                            stageDifference + forcedReleaseStep);
 
             current = level + stageDifference;
 
@@ -172,7 +180,7 @@ struct ADSREnvelope
         return current;
     }
 
-    float getCurrent() const noexcept { return current; }
+    SampleType getCurrent() const noexcept { return current; }
     bool isActive() const noexcept { return stage != Stage::idle; }
 
 private:
@@ -185,47 +193,55 @@ private:
         forcedRelease
     };
 
-    static constexpr float envelopeCompletionRatio = 0.047f;
-    static constexpr float attackCompletionRatio = 0.040f;
-    static constexpr float releaseCompletionRatio = 0.049f;
-    static constexpr float minimumDistance = 1.0e-7f;
+    static constexpr SampleType envelopeCompletionRatio = static_cast<SampleType> (0.047);
+    static constexpr SampleType attackCompletionRatio = static_cast<SampleType> (0.040);
+    static constexpr SampleType releaseCompletionRatio = static_cast<SampleType> (0.049);
+    static constexpr SampleType minimumDistance = static_cast<SampleType> (1.0e-7);
 
-    static float sanitiseSeconds (float seconds) noexcept
+    static SampleType sanitiseSeconds (SampleType seconds) noexcept
     {
-        return std::isfinite (seconds) ? std::max (0.0f, seconds) : 0.0f;
+        return std::isfinite (seconds) ? std::max (SampleType {}, seconds)
+                                       : SampleType {};
     }
 
-    float secondsToLinearRate (float seconds) const noexcept
+    SampleType secondsToLinearRate (SampleType seconds) const noexcept
     {
-        return 1.0f / std::max (1.0f, seconds * sampleRate);
+        return static_cast<SampleType> (1.0)
+             / std::max (static_cast<SampleType> (1.0), seconds * sampleRate);
     }
 
-    float secondsToExponentialFactor (float seconds, float completionRatio) const noexcept
+    SampleType secondsToExponentialFactor (SampleType seconds,
+                                           SampleType completionRatio) const noexcept
     {
-        const auto samples = std::max (1.0f, seconds * sampleRate);
-        return std::clamp (std::pow (completionRatio, 1.0f / samples),
-                           0.0f,
-                           0.999999f);
+        const auto samples = std::max (static_cast<SampleType> (1.0),
+                                       seconds * sampleRate);
+        return std::clamp (std::pow (completionRatio,
+                                     static_cast<SampleType> (1.0) / samples),
+                           SampleType {},
+                           static_cast<SampleType> (0.999999));
     }
 
-    float stageCompletionThreshold (float completionRatio) const noexcept
+    SampleType stageCompletionThreshold (SampleType completionRatio) const noexcept
     {
         return std::max (minimumDistance, std::abs (stageDifference) * completionRatio);
     }
 
-    static float finiteTimeAsymptote (float startLevel,
-                                      float targetLevel,
-                                      float completionRatio) noexcept
+    static SampleType finiteTimeAsymptote (SampleType startLevel,
+                                           SampleType targetLevel,
+                                           SampleType completionRatio) noexcept
     {
-        const auto ratio = std::clamp (completionRatio, 0.000001f, 0.95f);
-        return (targetLevel - startLevel * ratio) / (1.0f - ratio);
+        const auto ratio = std::clamp (completionRatio,
+                                       static_cast<SampleType> (0.000001),
+                                       static_cast<SampleType> (0.95));
+        return (targetLevel - startLevel * ratio)
+             / (static_cast<SampleType> (1.0) - ratio);
     }
 
     void beginStage (Stage nextStage,
-                     float target,
-                     float seconds,
-                     float exponentialFactor,
-                     float completionRatio) noexcept
+                     SampleType target,
+                     SampleType seconds,
+                     SampleType exponentialFactor,
+                     SampleType completionRatio) noexcept
     {
         stage = nextStage;
         stageTarget = target;
@@ -303,9 +319,11 @@ private:
         if (stageIsLinear)
         {
             if (stageDifference > 0.0f)
-                stageDifference = std::max (0.0f, stageDifference - stageLinearStep);
+                stageDifference = std::max (SampleType {},
+                                            stageDifference - stageLinearStep);
             else
-                stageDifference = std::min (0.0f, stageDifference + stageLinearStep);
+                stageDifference = std::min (SampleType {},
+                                            stageDifference + stageLinearStep);
         }
         else
         {
@@ -313,9 +331,9 @@ private:
         }
     }
 
-    void startFromLevel (float startLevel) noexcept
+    void startFromLevel (SampleType startLevel) noexcept
     {
-        current = std::max (0.0f, startLevel);
+        current = std::max (SampleType {}, startLevel);
         stageDifference = 0.0f;
 
         if (current >= 1.0f)
@@ -324,22 +342,22 @@ private:
             beginAttack();
     }
 
-    float sampleRate = 48000.0f;
-    float attackSeconds = 0.0f;
-    float decaySeconds = 0.0f;
-    float sustainLevel = 1.0f;
-    float releaseSeconds = 0.001f;
-    float current = 0.0f;
-    float level = 0.0f;
-    float stageTarget = 0.0f;
-    float stageDifference = 0.0f;
-    float stageThreshold = minimumDistance;
-    float factor = 0.0f;
-    float attackFactor = 0.0f;
-    float decayFactor = 0.0f;
-    float releaseFactor = 0.0f;
-    float stageLinearStep = 0.0f;
-    float forcedReleaseStep = 0.0f;
+    SampleType sampleRate = static_cast<SampleType> (48000.0);
+    SampleType attackSeconds {};
+    SampleType decaySeconds {};
+    SampleType sustainLevel = static_cast<SampleType> (1.0);
+    SampleType releaseSeconds = static_cast<SampleType> (0.001);
+    SampleType current {};
+    SampleType level {};
+    SampleType stageTarget {};
+    SampleType stageDifference {};
+    SampleType stageThreshold = minimumDistance;
+    SampleType factor {};
+    SampleType attackFactor {};
+    SampleType decayFactor {};
+    SampleType releaseFactor {};
+    SampleType stageLinearStep {};
+    SampleType forcedReleaseStep {};
     bool stageIsLinear = false;
     EnvelopeShape shape = EnvelopeShape::exponential;
     Stage stage = Stage::idle;

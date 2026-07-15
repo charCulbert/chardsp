@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
 
 namespace chardsp
 {
@@ -9,26 +10,33 @@ namespace chardsp
 enum class FilterMode
 {
     lowpass,
+    bandpass,
     highpass
 };
 
 // Two-integrator-loop topology-preserving-transform state-variable filter.
+template <typename SampleType>
 struct StateVariableFilter
 {
-    void prepare (float newSampleRate) noexcept
+    static_assert (std::is_same_v<SampleType, float>
+                   || std::is_same_v<SampleType, double>,
+                   "StateVariableFilter supports float or double");
+
+    void prepare (SampleType newSampleRate) noexcept
     {
         sampleRate = std::isfinite (newSampleRate) && newSampleRate > 0.0f
             ? newSampleRate
-            : 48000.0f;
+            : static_cast<SampleType> (48000.0);
         mode = FilterMode::lowpass;
-        setCutoffAndQ (20000.0f, 0.5f);
+        setCutoffAndQ (static_cast<SampleType> (20000.0),
+                       static_cast<SampleType> (0.5));
         reset();
     }
 
     void reset() noexcept
     {
-        z0 = 0.0f;
-        z1 = 0.0f;
+        z0 = SampleType {};
+        z1 = SampleType {};
     }
 
     void setMode (FilterMode nextMode) noexcept
@@ -36,7 +44,7 @@ struct StateVariableFilter
         mode = nextMode;
     }
 
-    void setCutoffAndQ (float cutoffHz, float q) noexcept
+    void setCutoffAndQ (SampleType cutoffHz, SampleType q) noexcept
     {
         const auto processorFrequency = static_cast<double> (sampleRate);
         const auto requestedCutoff = std::isnan (cutoffHz)
@@ -49,28 +57,34 @@ struct StateVariableFilter
                                  / processorFrequency);
         const auto requestedQ = std::isnan (q) ? 0.0 : static_cast<double> (q);
         const auto inverseQ = 1.0 / std::max (0.000001, requestedQ);
-        d = static_cast<float> (1.0 / ((1.0 + inverseQ * f) + f * f));
-        a = static_cast<float> (f);
-        g1 = static_cast<float> (f + inverseQ);
+        d = static_cast<SampleType> (1.0 / ((1.0 + inverseQ * f) + f * f));
+        a = static_cast<SampleType> (f);
+        g1 = static_cast<SampleType> (f + inverseQ);
     }
 
-    float process (float input) noexcept
+    SampleType process (SampleType input) noexcept
     {
         const auto high = ((input - g1 * z0) - z1) * d;
         const auto band = a * high + z0;
         const auto low = a * band + z1;
         z0 = a * high + band;
         z1 = a * band + low;
-        return mode == FilterMode::highpass ? high : low;
+        if (mode == FilterMode::highpass)
+            return high;
+
+        if (mode == FilterMode::bandpass)
+            return band;
+
+        return low;
     }
 
 private:
-    float sampleRate = 48000.0f;
-    float a = 0.0f;
-    float d = 1.0f;
-    float g1 = 0.0f;
-    float z0 = 0.0f;
-    float z1 = 0.0f;
+    SampleType sampleRate = static_cast<SampleType> (48000.0);
+    SampleType a = SampleType {};
+    SampleType d = static_cast<SampleType> (1.0);
+    SampleType g1 = SampleType {};
+    SampleType z0 = SampleType {};
+    SampleType z1 = SampleType {};
     FilterMode mode = FilterMode::lowpass;
 };
 
