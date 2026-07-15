@@ -794,6 +794,7 @@ struct TestVoice
         startCount = 0;
         releaseCount = 0;
         forcedReleaseCount = 0;
+        lastRenderedStartCount = 0;
         releaseSamplesRemaining = 0;
         active = false;
     }
@@ -823,6 +824,8 @@ struct TestVoice
 
     float next() noexcept
     {
+        lastRenderedStartCount = startCount;
+
         if (releaseSamplesRemaining > 0 && --releaseSamplesRemaining == 0)
             active = false;
 
@@ -839,8 +842,41 @@ struct TestVoice
     int startCount = 0;
     int releaseCount = 0;
     int forcedReleaseCount = 0;
+    int lastRenderedStartCount = 0;
     int releaseSamplesRemaining = 0;
     bool active = false;
+};
+
+struct SourceKey
+{
+    uint64_t source = 0;
+    float frequency = 0.0f;
+
+    friend bool operator== (const SourceKey& a,
+                            const SourceKey& b) noexcept
+    {
+        return a.source == b.source;
+    }
+};
+
+struct SourceVoice : TestVoice
+{
+    void prepare (float newSampleRate, size_t newVoiceIndex) noexcept
+    {
+        TestVoice::prepare (newSampleRate, newVoiceIndex);
+        source = 0;
+        frequency = 0.0f;
+    }
+
+    void start (const SourceKey& key, float nextVelocity) noexcept
+    {
+        source = key.source;
+        frequency = key.frequency;
+        TestVoice::start (static_cast<int> (key.source), nextVelocity);
+    }
+
+    uint64_t source = 0;
+    float frequency = 0.0f;
 };
 
 void testVoicePool (TestContext& context)
@@ -849,64 +885,66 @@ void testVoicePool (TestContext& context)
     Pool pool;
     pool.prepare (1000.0f);
 
-    pool.noteOn (60, 0.8f);
-    CHECK (pool.findVoiceForNote (60) == 0);
+    pool.start (60, 0.8f);
+    CHECK (pool.findVoice (60) == 0);
     CHECK (pool.getVoice (0).startCount == 1);
     CHECK (near (pool.getVoice (0).velocity, 0.8f));
     CHECK (pool.getActiveVoiceCount() == 1);
 
-    pool.noteOn (60, 0.4f);
+    pool.start (60, 0.4f);
     CHECK (pool.getVoice (0).startCount == 1);
-    pool.noteOn (60, 0.7f, 1);
-    CHECK (pool.findVoiceForNote (60, 1) == 1);
-    pool.noteOn (62, 0.7f);
-    pool.noteOn (64, 0.6f);
+    pool.start (62, 0.7f);
+    pool.start (64, 0.6f);
     CHECK (pool.getActiveVoiceCount() == 3);
-    CHECK (pool.findVoiceForNote (64) == 0);
-    CHECK (pool.isNoteHeld (60));
+    CHECK (pool.findVoice (64) == 2);
+    CHECK (pool.isKeyHeld (60));
 
-    // A stolen physical key remains held in the note-gate layer, matching
-    // PolyNoteGate: another NoteOn for it is ignored until its NoteOff.
-    pool.noteOn (60, 0.5f);
-    CHECK (pool.findVoiceForNote (64) == 0);
-
-    pool.noteOff (62);
-    CHECK (pool.getVoice (2).releaseCount == 1);
-    pool.noteOn (62, 0.9f);
-    CHECK (pool.getVoice (2).forcedReleaseCount == 1);
-    CHECK (near (pool.getVoice (2).lastForcedReleaseSeconds, 0.002f));
-    CHECK (pool.getVoice (2).startCount == 1);
+    pool.stop (62);
+    CHECK (pool.getVoice (1).releaseCount == 1);
+    pool.start (62, 0.9f);
+    CHECK (pool.getVoice (1).forcedReleaseCount == 1);
+    CHECK (near (pool.getVoice (1).lastForcedReleaseSeconds, 0.002f));
+    CHECK (pool.getVoice (1).startCount == 1);
     pool.next();
-    CHECK (pool.getVoice (2).startCount == 1);
+    CHECK (pool.getVoice (1).startCount == 1);
     pool.next();
-    CHECK (pool.getVoice (2).startCount == 2);
-    CHECK (pool.findVoiceForNote (62) == 2);
+    CHECK (pool.getVoice (1).startCount == 2);
+    CHECK (pool.getVoice (1).lastRenderedStartCount == 2);
+    CHECK (pool.findVoice (62) == 1);
 
-    // Cmajor parity: a released different pitch leaves its slot reserved, so
-    // a free voice is selected even after the release envelope becomes idle.
+    // A sounding release tail stays reserved, so another key uses a free slot.
     pool.prepare (1000.0f);
-    pool.noteOn (60, 1.0f);
-    pool.noteOff (60);
+    pool.start (60, 1.0f);
+    pool.stop (60);
 
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 3; ++i)
         pool.next();
 
-    CHECK (pool.getActiveVoiceCount() == 0);
-    CHECK (pool.findVoiceForNote (60) == 0);
-    pool.noteOn (62, 1.0f);
-    CHECK (pool.findVoiceForNote (60) == 0);
-    CHECK (pool.findVoiceForNote (62) == 1);
+    CHECK (pool.getActiveVoiceCount() == 1);
+    CHECK (pool.findVoice (60) == 0);
+    pool.start (62, 1.0f);
+    CHECK (pool.findVoice (60) == 0);
+    CHECK (pool.findVoice (62) == 1);
 
-    // Cmajor parity: released same-pitch retriggers force-release and restart
-    // the existing slot after exactly 2 ms.
+    // Unlike Nomad's event-only allocator, the C++ pool can ask the voice when
+    // its tail is actually silent and reclaim it immediately.
     pool.prepare (1000.0f);
-    pool.noteOn (60, 1.0f);
-    pool.noteOff (60);
+    pool.start (60, 1.0f);
+    pool.stop (60);
 
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 3; ++i)
         pool.next();
 
-    pool.noteOn (60, 0.25f);
+    CHECK (pool.findVoice (60) == 0);
+    pool.next();
+    CHECK (pool.findVoice (60) == -1);
+
+    // An active same-key release tail force-releases and restarts its existing
+    // slot after exactly 2 ms.
+    pool.prepare (1000.0f);
+    pool.start (60, 1.0f);
+    pool.stop (60);
+    pool.start (60, 0.25f);
     CHECK (pool.getVoice (0).forcedReleaseCount == 1);
     pool.next();
     CHECK (pool.getVoice (0).startCount == 1);
@@ -915,41 +953,41 @@ void testVoicePool (TestContext& context)
     CHECK (near (pool.getVoice (0).velocity, 0.25f));
 
     // Releasing a pending key before its delayed restart cancels it.
-    pool.noteOff (60);
-    pool.noteOn (60, 1.0f);
-    pool.noteOff (60);
+    pool.stop (60);
+    pool.start (60, 1.0f);
+    pool.stop (60);
     pool.next();
     pool.next();
     CHECK (pool.getVoice (0).startCount == 2);
 
     // Cmajor parity: oldest releasing is stolen before any held voice.
     pool.prepare (1000.0f);
-    pool.noteOn (60, 1.0f);
-    pool.noteOn (62, 1.0f);
-    pool.noteOn (64, 1.0f);
-    pool.noteOff (60);
-    pool.noteOff (62);
-    pool.noteOn (65, 1.0f);
-    CHECK (pool.findVoiceForNote (65) == 0);
-    CHECK (pool.findVoiceForNote (60) == -1);
-    CHECK (pool.findVoiceForNote (62) == 1);
+    pool.start (60, 1.0f);
+    pool.start (62, 1.0f);
+    pool.start (64, 1.0f);
+    pool.stop (60);
+    pool.stop (62);
+    pool.start (65, 1.0f);
+    CHECK (pool.findVoice (65) == 0);
+    CHECK (pool.findVoice (60) == -1);
+    CHECK (pool.findVoice (62) == 1);
 
     // Cmajor parity: the oldest held voice is the final fallback. A different
     // new note during a pending retrigger must still start immediately.
     pool.prepare (1000.0f);
-    pool.noteOn (60, 1.0f);
-    pool.noteOn (62, 1.0f);
-    pool.noteOn (64, 1.0f);
-    pool.noteOn (67, 1.0f);
-    CHECK (pool.findVoiceForNote (67) == 0);
-    CHECK (pool.findVoiceForNote (60) == -1);
+    pool.start (60, 1.0f);
+    pool.start (62, 1.0f);
+    pool.start (64, 1.0f);
+    pool.start (67, 1.0f);
+    CHECK (pool.findVoice (67) == 0);
+    CHECK (pool.findVoice (60) == -1);
 
-    pool.noteOff (62);
-    pool.noteOn (62, 1.0f);
-    pool.noteOn (69, 1.0f);
-    CHECK (pool.findVoiceForNote (69) >= 0);
+    pool.stop (62);
+    pool.start (62, 1.0f);
+    pool.start (69, 1.0f);
+    CHECK (pool.findVoice (69) >= 0);
 
-    pool.allNotesOff();
+    pool.allKeysOff();
 
     for (int i = 0; i < 4; ++i)
         pool.next();
@@ -957,43 +995,69 @@ void testVoicePool (TestContext& context)
     CHECK (pool.getActiveVoiceCount() == 0);
 
     pool.prepare (1000.0f);
-    pool.noteOn (69, 1.0f);
-    pool.noteOn (71, 1.0f);
+    pool.start (69, 1.0f);
+    pool.start (71, 1.0f);
     pool.forceReleaseAll();
     CHECK (pool.getVoice (0).forcedReleaseCount
            + pool.getVoice (1).forcedReleaseCount
            + pool.getVoice (2).forcedReleaseCount == 2);
 
-    // Sustain mirrors the Cmajor PolyNoteGate: key-up is deferred until the
-    // pedal is released, without losing the held-note record.
+    // Sustain defers voice release without introducing MIDI into the pool.
     pool.prepare (1000.0f);
-    pool.noteOn (72, 1.0f);
+    pool.start (72, 1.0f);
     pool.setSustain (true);
-    pool.noteOff (72);
-    CHECK (! pool.isNoteHeld (72));
+    pool.stop (72);
+    CHECK (! pool.isKeyHeld (72));
     CHECK (pool.getVoice (0).releaseCount == 0);
     pool.setSustain (false);
     CHECK (pool.getVoice (0).releaseCount == 1);
 
-    // Both the note gate and allocator forget released identity after the
-    // same fixed ten-second window used by Nomad.
+    // Release duration comes from the Voice, not a guessed allocator timeout.
+    // This tail deliberately lasts longer than Nomad's old ten-second memory.
     pool.prepare (10.0f);
-    pool.noteOn (74, 1.0f);
-    pool.noteOff (74);
+    pool.start (74, 1.0f);
+    pool.stop (74);
+    pool.getVoice (0).releaseSamplesRemaining = 102;
 
-    for (int i = 0; i < 100; ++i)
+    for (int i = 0; i < 101; ++i)
         pool.next();
 
-    CHECK (pool.findVoiceForNote (74) == -1);
+    CHECK (pool.findVoice (74) == 0);
+    pool.next();
+    CHECK (pool.findVoice (74) == -1);
+
+    // The key domain is caller-defined and has no MIDI or 32-key ceiling.
+    // Only the four actual voices are stored, no matter how many source IDs
+    // address the pool over time.
+    using SourcePool = chardsp::VoicePool<SourceVoice, 4, SourceKey>;
+    SourcePool sources;
+    sources.prepare (1000.0f);
+
+    for (uint64_t source = 0; source < 10000; ++source)
+        sources.start ({ source, 100.0f + static_cast<float> (source % 900) },
+                       0.5f);
+
+    CHECK (sources.getAllocatedVoiceCount() == 4);
+    CHECK (sources.getActiveVoiceCount() == 4);
+    CHECK (sources.findVoice ({ 9999, 0.0f }) >= 0);
+    CHECK (sources.findVoice ({ 0, 0.0f }) == -1);
+
+    const auto latest = static_cast<size_t> (
+        sources.findVoice ({ 9999, 0.0f }));
+    const auto startsBeforeDuplicate = sources.getVoice (latest).startCount;
+    sources.start ({ 9999, 777.0f }, 1.0f);
+    CHECK (sources.getVoice (latest).startCount == startsBeforeDuplicate);
+    sources.stop ({ 12, 0.0f });
+    CHECK (sources.getActiveVoiceCount() == 4);
 
     const auto allocationsBeforeExercise = allocationCount.load();
 
     for (int event = 0; event < 100000; ++event)
     {
-        pool.noteOn (event % 12, 0.75f);
+        pool.start (event, 0.75f);
 
         if (event % 3 == 0)
-            pool.noteOff (event % 12);
+            pool.stop (event);
 
         pool.next();
     }

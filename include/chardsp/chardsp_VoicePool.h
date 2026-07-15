@@ -4,32 +4,43 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <type_traits>
+#include <utility>
 
 namespace chardsp
 {
 
-// Voice must provide:
+// Key is a small, caller-defined identity type. It can represent a MIDI
+// note/channel pair, an analog key, a sequencer event, or anything else with
+// equality comparison. Voice must provide:
 //   prepare (float sampleRate, size_t voiceIndex)
-//   start (int note, float velocity)
+//   start (const Key& key, float velocity)
 //   release(), forceRelease (float seconds), next(), and isActive()
 //
-// This combines Nomad's poly note gate and release-aware allocator. It keeps
-// physical key state separate from voice-slot state, which is important after
-// a held voice has been stolen.
-template <typename Voice, size_t voiceCount>
+// The pool deliberately stores only its fixed set of voice slots. Input
+// scanning, debounce, and physical-key history after a voice is stolen belong
+// to the caller. This keeps the allocator below MIDI and makes its memory use
+// independent of the number of possible input keys.
+template <typename Voice, size_t voiceCount, typename Key = int>
 struct VoicePool
 {
     static_assert (voiceCount > 0, "A voice pool needs at least one voice");
+    static_assert (std::is_nothrow_default_constructible_v<Key>,
+                   "VoicePool Key must be nothrow default constructible");
+    static_assert (std::is_nothrow_copy_constructible_v<Key>,
+                   "VoicePool Key must be nothrow copy constructible");
+    static_assert (std::is_nothrow_copy_assignable_v<Key>,
+                   "VoicePool Key must be nothrow copy assignable");
+    static_assert (noexcept (std::declval<const Key&>()
+                             == std::declval<const Key&>()),
+                   "VoicePool Key equality must be noexcept");
 
-    static constexpr float sameNoteFadeSeconds = 0.002f;
-    static constexpr float releasedNoteMemorySeconds = 10.0f;
-    static constexpr size_t heldNoteCapacity = 32;
+    static constexpr float sameKeyFadeSeconds = 0.002f;
 
     void prepare (float newSampleRate) noexcept
     {
         sampleRate = newSampleRate;
         voiceStates = {};
-        heldNotes = {};
         pending = {};
         sustainActive = false;
         nextAge = 1;
@@ -38,50 +49,54 @@ struct VoicePool
             voices[i].prepare (sampleRate, i);
     }
 
-    void noteOn (int note, float velocity, uint8_t channel = 0) noexcept
+    // Starts a caller-defined key. Repeated starts while that key still owns a
+    // held voice are ignored. Re-starting its retained release tail performs
+    // Nomad's 2 ms fade before using the same slot.
+    void start (const Key& key, float velocity) noexcept
     {
-        if (const auto existing = findHeldNote (note, channel); existing >= 0)
+        if (pending.active && pending.key == key)
+            return;
+
+        if (const auto existing = findAllocatedVoice (key); existing >= 0)
         {
             const auto index = static_cast<size_t> (existing);
 
-            if (heldNotes[index].keyHeld)
+            if (voiceStates[index].keyHeld)
                 return;
 
-            forceReleaseVoiceForNote (note, channel);
-            clearHeldNote (index);
-            scheduleSameNoteRetrigger (note, velocity, channel);
+            forceReleaseVoice (index);
+
+            if (voiceStates[index].allocated)
+                scheduleSameKeyRetrigger (key, velocity);
+            else
+                startAllocatedVoice (key, velocity);
+
             return;
         }
 
-        rememberHeldNote (note, channel);
-        startAllocatedVoice (note, velocity, channel);
+        startAllocatedVoice (key, velocity);
     }
 
-    void noteOff (int note, uint8_t channel = 0) noexcept
+    // Stops a key only if it still owns a held voice. Stops for keys whose
+    // voices were already stolen are harmless.
+    void stop (const Key& key) noexcept
     {
-        if (pending.active && pending.note == note
-            && pending.channel == channel)
+        if (pending.active && pending.key == key)
         {
             pending.active = false;
             return;
         }
 
-        const auto held = findHeldNote (note, channel);
+        const auto held = findHeldVoice (key);
 
         if (held < 0)
             return;
 
-        auto& heldState = heldNotes[static_cast<size_t> (held)];
-        heldState.keyHeld = false;
+        const auto index = static_cast<size_t> (held);
+        voiceStates[index].keyHeld = false;
 
-        if (sustainActive)
-        {
-            heldState.releaseSamplesRemaining = 0.0f;
-            return;
-        }
-
-        releaseAllocatedVoice (note, channel);
-        heldState.releaseSamplesRemaining = releaseMemorySamples();
+        if (! sustainActive)
+            releaseVoice (index);
     }
 
     void setSustain (bool active) noexcept
@@ -92,10 +107,10 @@ struct VoicePool
         sustainActive = active;
 
         if (! sustainActive)
-            releaseSustainedNotes();
+            releaseSustainedVoices();
     }
 
-    void allNotesOff() noexcept
+    void allKeysOff() noexcept
     {
         pending.active = false;
         sustainActive = false;
@@ -107,20 +122,15 @@ struct VoicePool
             if (! state.allocated || ! state.gate)
                 continue;
 
-            state.gate = false;
-            state.releasing = true;
-            state.releaseSamplesRemaining = releaseMemorySamples();
-            voices[i].release();
+            state.keyHeld = false;
+            releaseVoice (i);
         }
-
-        heldNotes = {};
     }
 
-    void forceReleaseAll (float seconds = sameNoteFadeSeconds) noexcept
+    void forceReleaseAll (float seconds = sameKeyFadeSeconds) noexcept
     {
         pending.active = false;
         sustainActive = false;
-        heldNotes = {};
 
         for (size_t i = 0; i < voiceCount; ++i)
         {
@@ -133,24 +143,28 @@ struct VoicePool
 
             if (state.allocated)
             {
+                state.keyHeld = false;
                 state.gate = false;
                 state.releasing = true;
-                state.releaseSamplesRemaining = releaseMemorySamples();
+
+                if (! voices[i].isActive())
+                    state = {};
             }
         }
     }
 
     float next() noexcept
     {
+        // Cmajor's note gate advances its delayed retrigger before the voices
+        // render this frame, so a completed 2 ms fade restarts sample-exactly.
+        advancePendingRetrigger();
         float mix = 0.0f;
 
         for (size_t i = 0; i < voiceCount; ++i)
             if (voiceStates[i].allocated || voices[i].isActive())
                 mix += voices[i].next();
 
-        ageReleasedVoices();
-        ageReleasedHeldNotes();
-        advancePendingRetrigger();
+        reclaimSilentVoices();
         return mix;
     }
 
@@ -179,62 +193,43 @@ struct VoicePool
         return allocated;
     }
 
-    int findVoiceForNote (int note, uint8_t channel = 0) const noexcept
+    int findVoice (const Key& key) const noexcept
     {
-        return findAllocatedVoice (note, channel);
+        return findAllocatedVoice (key);
     }
 
-    bool isNoteHeld (int note, uint8_t channel = 0) const noexcept
+    bool isKeyHeld (const Key& key) const noexcept
     {
-        const auto held = findHeldNote (note, channel);
-        return held >= 0
-            && heldNotes[static_cast<size_t> (held)].keyHeld;
+        const auto voice = findHeldVoice (key);
+        return voice >= 0;
     }
 
 private:
     struct VoiceState
     {
-        int note = -1;
-        uint8_t channel = 0;
+        Key key {};
         bool allocated = false;
+        bool keyHeld = false;
         bool gate = false;
         bool releasing = false;
         uint64_t age = 0;
-        float releaseSamplesRemaining = 0.0f;
-    };
-
-    struct HeldNote
-    {
-        int note = -1;
-        uint8_t channel = 0;
-        bool active = false;
-        bool keyHeld = false;
-        float releaseSamplesRemaining = 0.0f;
     };
 
     struct PendingRetrigger
     {
-        bool active = false;
-        int note = -1;
+        Key key {};
         float velocity = 0.0f;
-        uint8_t channel = 0;
         float samplesRemaining = 0.0f;
+        bool active = false;
     };
-
-    float releaseMemorySamples() const noexcept
-    {
-        const auto samples = releasedNoteMemorySeconds * sampleRate;
-        return samples > 1.0f ? samples : 1.0f;
-    }
 
     float retriggerFadeSamples() const noexcept
     {
-        const auto samples = sameNoteFadeSeconds * sampleRate;
+        const auto samples = sameKeyFadeSeconds * sampleRate;
         return samples > 1.0f ? samples : 1.0f;
     }
 
-    void startAllocatedVoice (int note, float velocity,
-                              uint8_t channel) noexcept
+    void startAllocatedVoice (const Key& key, float velocity) noexcept
     {
         const auto index = chooseVoice();
         auto& state = voiceStates[index];
@@ -242,14 +237,13 @@ private:
         if (state.allocated && state.gate)
             voices[index].release();
 
-        state.note = note;
-        state.channel = channel;
+        state.key = key;
         state.allocated = true;
+        state.keyHeld = true;
         state.gate = true;
         state.releasing = false;
         state.age = nextAge++;
-        state.releaseSamplesRemaining = 0.0f;
-        voices[index].start (note, velocity);
+        voices[index].start (key, velocity);
     }
 
     size_t chooseVoice() const noexcept
@@ -289,63 +283,35 @@ private:
         return selected;
     }
 
-    void releaseAllocatedVoice (int note, uint8_t channel) noexcept
+    void releaseVoice (size_t index) noexcept
     {
-        const auto held = findHeldAllocatedVoice (note, channel);
-
-        if (held < 0)
-            return;
-
-        const auto index = static_cast<size_t> (held);
         auto& state = voiceStates[index];
         voices[index].release();
         state.gate = false;
         state.releasing = true;
-        state.releaseSamplesRemaining = releaseMemorySamples();
+
+        if (! voices[index].isActive())
+            state = {};
     }
 
-    void forceReleaseVoiceForNote (int note, uint8_t channel) noexcept
+    void forceReleaseVoice (size_t index) noexcept
     {
-        const auto allocated = findAllocatedVoice (note, channel);
-
-        if (allocated < 0)
-            return;
-
-        const auto index = static_cast<size_t> (allocated);
         auto& state = voiceStates[index];
-        voices[index].forceRelease (sameNoteFadeSeconds);
+        voices[index].forceRelease (sameKeyFadeSeconds);
+        state.keyHeld = false;
         state.gate = false;
         state.releasing = true;
-        state.releaseSamplesRemaining = releaseMemorySamples();
+
+        if (! voices[index].isActive())
+            state = {};
     }
 
-    void rememberHeldNote (int note, uint8_t channel) noexcept
+    void scheduleSameKeyRetrigger (const Key& key, float velocity) noexcept
     {
-        auto slot = findFreeHeldNote();
-
-        if (slot < 0)
-        {
-            slot = 0;
-            const auto& old = heldNotes[0];
-            releaseAllocatedVoice (old.note, old.channel);
-        }
-
-        auto& held = heldNotes[static_cast<size_t> (slot)];
-        held.note = note;
-        held.channel = channel;
-        held.active = true;
-        held.keyHeld = true;
-        held.releaseSamplesRemaining = 0.0f;
-    }
-
-    void scheduleSameNoteRetrigger (int note, float velocity,
-                                    uint8_t channel) noexcept
-    {
-        pending.active = true;
-        pending.note = note;
+        pending.key = key;
         pending.velocity = velocity;
-        pending.channel = channel;
         pending.samplesRemaining = retriggerFadeSamples();
+        pending.active = true;
     }
 
     void advancePendingRetrigger() noexcept
@@ -353,131 +319,72 @@ private:
         if (! pending.active || (pending.samplesRemaining -= 1.0f) > 0.0f)
             return;
 
-        const auto note = pending.note;
+        const auto key = pending.key;
         const auto velocity = pending.velocity;
-        const auto channel = pending.channel;
         pending.active = false;
-        rememberHeldNote (note, channel);
 
-        if (const auto same = findAllocatedVoice (note, channel); same >= 0)
+        if (const auto same = findAllocatedVoice (key); same >= 0)
         {
             const auto index = static_cast<size_t> (same);
             auto& state = voiceStates[index];
+            state.keyHeld = true;
             state.gate = true;
             state.releasing = false;
             state.age = nextAge++;
-            state.releaseSamplesRemaining = 0.0f;
-            voices[index].start (note, velocity);
+            voices[index].start (key, velocity);
             return;
         }
 
-        startAllocatedVoice (note, velocity, channel);
+        startAllocatedVoice (key, velocity);
     }
 
-    void releaseSustainedNotes() noexcept
-    {
-        for (auto& held : heldNotes)
-        {
-            if (! held.active || held.keyHeld
-                || held.releaseSamplesRemaining > 0.0f)
-                continue;
-
-            releaseAllocatedVoice (held.note, held.channel);
-            held.releaseSamplesRemaining = releaseMemorySamples();
-        }
-    }
-
-    void ageReleasedVoices() noexcept
-    {
-        for (auto& state : voiceStates)
-        {
-            if (! state.allocated || ! state.releasing)
-                continue;
-
-            state.releaseSamplesRemaining -= 1.0f;
-
-            if (state.releaseSamplesRemaining <= 0.0f)
-                state = {};
-        }
-    }
-
-    void ageReleasedHeldNotes() noexcept
-    {
-        for (auto& held : heldNotes)
-        {
-            if (! held.active || held.keyHeld
-                || held.releaseSamplesRemaining <= 0.0f)
-                continue;
-
-            held.releaseSamplesRemaining -= 1.0f;
-
-            if (held.releaseSamplesRemaining <= 0.0f)
-                held = {};
-        }
-    }
-
-    void clearHeldNote (size_t index) noexcept
-    {
-        heldNotes[index] = {};
-    }
-
-    int findAllocatedVoice (int note, uint8_t channel) const noexcept
+    void releaseSustainedVoices() noexcept
     {
         for (size_t i = 0; i < voiceCount; ++i)
         {
             const auto& state = voiceStates[i];
 
-            if (state.allocated && state.note == note
-                && state.channel == channel)
-                return static_cast<int> (i);
+            if (state.allocated && state.gate && ! state.keyHeld)
+                releaseVoice (i);
         }
-
-        return -1;
     }
 
-    int findHeldAllocatedVoice (int note, uint8_t channel) const noexcept
+    void reclaimSilentVoices() noexcept
+    {
+        for (size_t i = 0; i < voiceCount; ++i)
+            if (voiceStates[i].allocated && ! voices[i].isActive())
+                voiceStates[i] = {};
+    }
+
+    int findAllocatedVoice (const Key& key) const noexcept
     {
         for (size_t i = 0; i < voiceCount; ++i)
         {
             const auto& state = voiceStates[i];
 
-            if (state.allocated && state.gate && state.note == note
-                && state.channel == channel)
+            if (state.allocated && state.key == key)
                 return static_cast<int> (i);
         }
 
         return -1;
     }
 
-    int findHeldNote (int note, uint8_t channel) const noexcept
+    int findHeldVoice (const Key& key) const noexcept
     {
-        for (size_t i = 0; i < heldNoteCapacity; ++i)
+        for (size_t i = 0; i < voiceCount; ++i)
         {
-            const auto& held = heldNotes[i];
+            const auto& state = voiceStates[i];
 
-            if (held.active && held.note == note && held.channel == channel)
+            if (state.allocated && state.gate && state.keyHeld
+                && state.key == key)
                 return static_cast<int> (i);
         }
-
-        return -1;
-    }
-
-    int findFreeHeldNote() const noexcept
-    {
-        for (size_t i = 0; i < heldNoteCapacity; ++i)
-            if (! heldNotes[i].active)
-                return static_cast<int> (i);
-
-        for (size_t i = 0; i < heldNoteCapacity; ++i)
-            if (! heldNotes[i].keyHeld)
-                return static_cast<int> (i);
 
         return -1;
     }
 
     std::array<Voice, voiceCount> voices;
     std::array<VoiceState, voiceCount> voiceStates {};
-    std::array<HeldNote, heldNoteCapacity> heldNotes {};
     PendingRetrigger pending;
     float sampleRate = 48000.0f;
     uint64_t nextAge = 1;

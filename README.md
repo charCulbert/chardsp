@@ -95,16 +95,22 @@ independently.
   Nomad's hard sync, micro-drift, two-oscillator routing, and physical models
   remain higher-level policy. Noise stays a separate `ColoredNoise` source so
   consumers can give it an explicit level and color.
-- `VoicePool<Voice, voiceCount>` owns a fixed array of the consumer's `Voice`
-  type and presents the small playable API: `prepare()`, channel-aware
-  `noteOn()`/`noteOff()`, `setSustain()`, `allNotesOff()`, and `next()`.
-  Nomad's 32-note gate state is kept separate from its voice slots, released
-  identities remain eligible for same-note reuse for 10 seconds, and pressure
-  selects a free voice, the oldest releasing voice, then the oldest held voice.
-  Re-pressing a released note applies Nomad's 2 ms forced fade before that note
-  restarts. Each instrument defines its own allocation-free `Voice` DSP
-  topology through the documented method contract; no base class, virtual call,
-  or runtime allocation is introduced.
+- `VoicePool<Voice, voiceCount, Key>` owns a fixed array of the consumer's
+  `Voice` type and presents the protocol-neutral API `prepare()`, `start()`,
+  `stop()`, `setSustain()`, `allKeysOff()`, and `next()`. `Key` is a small
+  caller-defined identity: it can be a MIDI note/channel pair, an analog input
+  pin plus pitch, or a sequencer token. The pool stores only its voice slots,
+  so its memory does not grow with the possible key domain and there is no
+  32-key or MIDI ceiling. The caller remains responsible for input scanning,
+  debounce, and remembering physical keys after their voices are stolen.
+  A released slot remains allocated for exactly as long as its `Voice` reports
+  `isActive()`: short releases become free promptly and long releases are never
+  cut off by an allocator timeout. Pressure selects a free voice, the oldest
+  actually-releasing voice, then the oldest held voice. Re-pressing an active
+  release tail applies Nomad's 2 ms forced fade before that key restarts. Each
+  instrument defines its own allocation-free `Voice` DSP topology through the
+  documented method contract; no base class, virtual call, or runtime
+  allocation is introduced.
 
 All six Nomad-derived components are in `namespace chardsp`; their reset, parameter,
 allocation, and per-sample methods are `noexcept`.
