@@ -16,7 +16,7 @@ namespace chardsp
 // equality comparison. Voice must provide:
 //   prepare (SampleType sampleRate, size_t voiceIndex)
 //   start (const Key& key, SampleType velocity)
-//   release(), forceRelease (SampleType seconds), next(), and isActive(),
+//   release(), forceRelease (SampleType seconds), next(), and isAvailable(),
 // where SampleType is the float or double returned by Voice::next().
 //
 // The pool deliberately stores only its fixed set of voice slots. Input
@@ -70,8 +70,8 @@ struct VoicePool
     SampleType getStealFadeTime() const noexcept { return stealFadeSeconds; }
 
     // Starts a caller-defined key. Repeated starts while that key still owns a
-    // held voice are ignored. If no slot is free, the selected old voice fades
-    // fully to silence before the pending key starts in that same slot.
+    // held voice are ignored. If no slot is free, the selected old voice begins
+    // its forced release before the pending key starts in that same slot.
     void start (const Key& key, SampleType velocity) noexcept
     {
         if (findPendingVoice (key) >= 0)
@@ -150,7 +150,7 @@ struct VoicePool
         {
             auto& state = voiceStates[i];
 
-            if (! state.allocated && ! voices[i].isActive())
+            if (! state.allocated && voices[i].isAvailable())
                 continue;
 
             voices[i].forceRelease (seconds);
@@ -161,7 +161,7 @@ struct VoicePool
                 state.gate = false;
                 state.releasing = true;
 
-                if (! voices[i].isActive())
+                if (voices[i].isAvailable())
                     state = {};
             }
         }
@@ -173,14 +173,16 @@ struct VoicePool
 
         for (size_t i = 0; i < voiceCount; ++i)
         {
-            if (voiceStates[i].allocated || voices[i].isActive())
-                mix += voices[i].next();
+            // Like a conventional synth render callback, every fixed voice is
+            // ticked. An available Voice owns its cheap path: it can simply
+            // return zero or advance a free-running source first.
+            mix += voices[i].next();
 
-            if (pendingStarts[i].active && ! voices[i].isActive())
+            if (pendingStarts[i].active && voices[i].isAvailable())
                 startPendingVoice (i);
         }
 
-        reclaimSilentVoices();
+        reclaimAvailableVoices();
         return mix;
     }
 
@@ -192,7 +194,7 @@ struct VoicePool
         size_t active = 0;
 
         for (const auto& voice : voices)
-            if (voice.isActive())
+            if (! voice.isAvailable())
                 ++active;
 
         return active;
@@ -255,7 +257,7 @@ private:
             return;
         }
 
-        if (voiceStates[index].allocated || voices[index].isActive())
+        if (voiceStates[index].allocated || ! voices[index].isAvailable())
         {
             replaceVoice (index, key, velocity);
             return;
@@ -283,9 +285,9 @@ private:
     {
         const auto age = nextAge++;
 
-        if (stealFadeSeconds <= SampleType {} || ! voices[index].isActive())
+        if (stealFadeSeconds <= SampleType {} || voices[index].isAvailable())
         {
-            if (voices[index].isActive())
+            if (! voices[index].isAvailable())
                 voices[index].forceRelease (SampleType {});
 
             pendingStarts[index] = {};
@@ -295,7 +297,7 @@ private:
 
         voices[index].forceRelease (stealFadeSeconds);
 
-        if (! voices[index].isActive())
+        if (voices[index].isAvailable())
         {
             startVoice (index, key, velocity, age);
             return;
@@ -311,7 +313,8 @@ private:
     size_t chooseVoice() const noexcept
     {
         for (size_t i = 0; i < voiceCount; ++i)
-            if (! voiceStates[i].allocated && ! pendingStarts[i].active)
+            if (! voiceStates[i].allocated && ! pendingStarts[i].active
+                && voices[i].isAvailable())
                 return i;
 
         size_t selected = voiceCount;
@@ -369,7 +372,7 @@ private:
         state.gate = false;
         state.releasing = true;
 
-        if (! voices[index].isActive())
+        if (voices[index].isAvailable())
             state = {};
     }
 
@@ -391,11 +394,11 @@ private:
         }
     }
 
-    void reclaimSilentVoices() noexcept
+    void reclaimAvailableVoices() noexcept
     {
         for (size_t i = 0; i < voiceCount; ++i)
             if (! pendingStarts[i].active && voiceStates[i].allocated
-                && ! voices[i].isActive())
+                && voices[i].isAvailable())
                 voiceStates[i] = {};
     }
 

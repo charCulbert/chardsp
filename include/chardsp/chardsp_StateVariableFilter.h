@@ -64,6 +64,14 @@ struct StateVariableFilter
 
     SampleType process (SampleType input) noexcept
     {
+        if (input == SampleType {})
+        {
+            snapTinyStateToZero();
+
+            if (z0 == SampleType {} && z1 == SampleType {})
+                return SampleType {};
+        }
+
         const auto high = ((input - g1 * z0) - z1) * d;
         const auto band = a * high + z0;
         const auto low = a * band + z1;
@@ -79,6 +87,17 @@ struct StateVariableFilter
     }
 
 private:
+    void snapTinyStateToZero() noexcept
+    {
+        constexpr auto threshold = static_cast<SampleType> (1.0e-15);
+
+        if (std::abs (z0) < threshold)
+            z0 = SampleType {};
+
+        if (std::abs (z1) < threshold)
+            z1 = SampleType {};
+    }
+
     SampleType sampleRate = static_cast<SampleType> (48000.0);
     SampleType a = SampleType {};
     SampleType d = static_cast<SampleType> (1.0);

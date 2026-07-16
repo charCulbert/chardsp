@@ -90,7 +90,8 @@ independently.
   `0.48 * sampleRate`, and gives Q a positive floor. Resonance percentages,
   note-domain modulation, smoothing, and periodic coefficient-update policy
   are deliberately outside the filter; compose those with `SmoothedValue` when
-  needed.
+  needed. Zero-input processing snaps inaudibly tiny integrator state to exact
+  zero, providing portable denormal protection and an exact-zero fast path.
 - `ColoredNoise<SampleType>` selects the exact brown, pink, white, or blue endpoint with
   `NoiseColor`. `reset(seed)` makes the stream repeatable. Every endpoint state
   advances on every `next()` call, so changing color does not change the
@@ -103,6 +104,8 @@ independently.
 - `Oscillator<SampleType>` adds Nomad's pitched `saw`, `ramp`, `pulse`, `triangle`, and
   `sine` waveform/shape equations. It renders at 4x through `Downsampler4x` and
   exposes immediate waveform, frequency, shape, and phase-reset control.
+  `advance()` moves the phase by one output sample without rendering, allowing
+  a voice to preserve true free-running phase cheaply while it is available.
   Nomad's hard sync, micro-drift, two-oscillator routing, and physical models
   remain higher-level policy. Noise stays a separate `ColoredNoise` source so
   consumers can give it an explicit level and color.
@@ -114,8 +117,8 @@ independently.
   so its memory does not grow with the possible key domain and there is no
   32-key or MIDI ceiling. The caller remains responsible for input scanning,
   debounce, and remembering physical keys after their voices are stolen.
-  A released slot remains allocated for exactly as long as its `Voice` reports
-  `isActive()`: short releases become free promptly and long releases are never
+  A released slot remains allocated until its `Voice::isAvailable()` returns
+  true: short releases become free promptly and long releases are never
   cut off by an allocator timeout. Pressure selects a free voice, the oldest
   actually-releasing voice, then the oldest held voice. Every active voice
   selected for stealing finishes a configurable forced fade before its pending
@@ -125,8 +128,10 @@ independently.
   the oldest pending starts, so the most recent keys win without an unbounded
   event queue. A pending key's `stop()` cancels that future start. Each
   instrument defines its own allocation-free `Voice` DSP topology through the
-  documented method contract; no base class, virtual call, or runtime
-  allocation is introduced.
+  documented method contract. Every fixed voice receives `next()` on every
+  frame and owns its available-state fast path; it can return zero immediately
+  or advance a free-running source first. No base class, virtual call, or
+  runtime allocation is introduced.
 
 All components are in `namespace chardsp`; their reset, parameter, allocation,
 and per-sample methods are `noexcept`.

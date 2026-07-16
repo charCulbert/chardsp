@@ -210,6 +210,34 @@ void testOscillator (choc::test::TestProgress& progress)
     first.setFrequency (std::numeric_limits<float>::infinity());
     CHECK (near (first.getFrequency(), 44100.0f * 0.49f));
     CHECK (std::isfinite (first.next()));
+
+    // advance() follows the same phase timeline as discarding a rendered
+    // output sample, but does not keep stale oversampling-filter state.
+    chardsp::Oscillator<float> advanced;
+    chardsp::Oscillator<float> rendered;
+    advanced.prepare (48000.0f);
+    rendered.prepare (48000.0f);
+    advanced.setWaveform (chardsp::OscillatorWaveform::sine);
+    rendered.setWaveform (chardsp::OscillatorWaveform::sine);
+    advanced.setFrequency (997.0f);
+    rendered.setFrequency (997.0f);
+    advanced.reset (0.37f);
+    rendered.reset (0.37f);
+
+    constexpr int skippedSamples = 137;
+    for (int i = 0; i < skippedSamples; ++i)
+    {
+        advanced.advance();
+        rendered.next();
+    }
+
+    // A waveform round-trip resets only the rendered oscillator's stale
+    // downsampler, leaving its reference phase untouched.
+    rendered.setWaveform (chardsp::OscillatorWaveform::triangle);
+    rendered.setWaveform (chardsp::OscillatorWaveform::sine);
+
+    for (int i = 0; i < 64; ++i)
+        CHECK (near (advanced.next(), rendered.next(), 0.000002f));
 }
 
 void testChocTriangleModulation (choc::test::TestProgress& progress)
@@ -570,6 +598,24 @@ void testStateVariableFilterBehavior (choc::test::TestProgress& progress)
 
     CHECK (stableSilence);
 
+    chardsp::StateVariableFilter<float> decaying;
+    decaying.prepare (48000.0f);
+    decaying.setCutoffAndQ (1000.0f, 0.70710678f);
+    CHECK (decaying.process (1.0f) != 0.0f);
+
+    bool reachedExactZero = false;
+    for (int i = 0; i < 100000; ++i)
+    {
+        if (decaying.process (0.0f) == 0.0f)
+        {
+            reachedExactZero = true;
+            break;
+        }
+    }
+
+    CHECK (reachedExactZero);
+    CHECK (decaying.process (0.0f) == 0.0f);
+
     const auto allocationsBeforeRender = allocationCount.load();
     bool allFinite = true;
 
@@ -876,6 +922,7 @@ struct TestVoice
         releaseCount = 0;
         forcedReleaseCount = 0;
         lastRenderedStartCount = 0;
+        renderCount = 0;
         releaseSamplesRemaining = 0;
         active = false;
     }
@@ -905,6 +952,7 @@ struct TestVoice
 
     float next() noexcept
     {
+        ++renderCount;
         lastRenderedStartCount = startCount;
 
         if (releaseSamplesRemaining > 0 && --releaseSamplesRemaining == 0)
@@ -913,7 +961,7 @@ struct TestVoice
         return active ? 0.1f : 0.0f;
     }
 
-    bool isActive() const noexcept { return active; }
+    bool isAvailable() const noexcept { return ! active; }
 
     float sampleRate = 0.0f;
     float velocity = 0.0f;
@@ -924,6 +972,7 @@ struct TestVoice
     int releaseCount = 0;
     int forcedReleaseCount = 0;
     int lastRenderedStartCount = 0;
+    int renderCount = 0;
     int releaseSamplesRemaining = 0;
     bool active = false;
 };
@@ -965,6 +1014,11 @@ void testVoicePool (choc::test::TestProgress& progress)
     using Pool = chardsp::VoicePool<TestVoice, 3>;
     Pool pool;
     pool.prepare (1000.0f);
+
+    pool.next();
+    CHECK (pool.getVoice (0).renderCount == 1);
+    CHECK (pool.getVoice (1).renderCount == 1);
+    CHECK (pool.getVoice (2).renderCount == 1);
 
     pool.start (60, 0.8f);
     CHECK (pool.findVoice (60) == 0);
@@ -1010,7 +1064,7 @@ void testVoicePool (choc::test::TestProgress& progress)
     CHECK (pool.findVoice (62) == 1);
 
     // Unlike Nomad's event-only allocator, the C++ pool can ask the voice when
-    // its tail is actually silent and reclaim it immediately.
+    // its tail is actually available and reclaim it immediately.
     pool.prepare (1000.0f);
     pool.start (60, 1.0f);
     pool.stop (60);
@@ -1047,7 +1101,7 @@ void testVoicePool (choc::test::TestProgress& progress)
     CHECK (pool.getVoice (0).startCount == 2);
 
     // Any stolen voice uses the same delayed fade, not only same-key
-    // retriggers. The new voice starts after the old voice reports silence.
+    // retriggers. The new voice starts after the old voice reports availability.
     using SingleVoicePool = chardsp::VoicePool<TestVoice, 1>;
     SingleVoicePool single;
     single.prepare (1000.0f);
@@ -1118,7 +1172,7 @@ void testVoicePool (choc::test::TestProgress& progress)
     CHECK (pair.getVoice (0).forcedReleaseCount == 1);
 
     // A burst much larger than the voice count stays bounded. With two slots,
-    // the two newest pending keys survive until the original voices go silent.
+    // the two newest pending keys survive until the original voices become available.
     pair.prepare (1000.0f);
     pair.start (60, 1.0f);
     pair.start (62, 1.0f);

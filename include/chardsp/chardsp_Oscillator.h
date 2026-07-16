@@ -50,12 +50,16 @@ struct Oscillator
 
         cycleIndex = 0;
         downsampler.reset();
+        downsamplerNeedsReset = false;
     }
 
     void setWaveform (OscillatorWaveform nextWaveform) noexcept
     {
         if (waveform != nextWaveform)
+        {
             downsampler.reset();
+            downsamplerNeedsReset = false;
+        }
 
         waveform = nextWaveform;
     }
@@ -87,10 +91,31 @@ struct Oscillator
     SampleType getFrequency() const noexcept { return frequency; }
     SampleType getShape() const noexcept { return shape; }
 
+    // Advances by one output sample without rendering the waveform. This is
+    // the cheap path for a free-running oscillator inside an available voice.
+    // The oversampling filter is reset before rendering resumes so old filter
+    // state cannot reappear after an idle interval.
+    void advance() noexcept
+    {
+        downsamplerNeedsReset = true;
+
+        if (phaseIncrement <= SampleType {})
+            return;
+
+        for (int oversample = 0; oversample < 4; ++oversample)
+            advancePhase();
+    }
+
     SampleType next() noexcept
     {
         if (phaseIncrement <= 0.0f)
             return SampleType {};
+
+        if (downsamplerNeedsReset)
+        {
+            downsampler.reset();
+            downsamplerNeedsReset = false;
+        }
 
         std::array<SampleType, 4> oversampled {};
 
@@ -220,6 +245,7 @@ private:
     SampleType phaseIncrement {};
     SampleType shape {};
     int cycleIndex = 0;
+    bool downsamplerNeedsReset = false;
 };
 
 } // namespace chardsp
