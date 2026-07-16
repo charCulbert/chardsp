@@ -8,7 +8,7 @@
 
 #include "chardsp_ADSREnvelope.h"
 #include "chardsp_ColoredNoise.h"
-#include "chardsp_Oscillator.h"
+#include "chardsp_NomadOscillators.h"
 #include "chardsp_StateVariableFilter.h"
 
 namespace chardsp
@@ -36,6 +36,9 @@ struct BasicSynthVoice
                      && newSampleRate > SampleType {}
             ? newSampleRate : static_cast<SampleType> (48000);
         velocity = SampleType {};
+        velocitySensitivity = static_cast<SampleType> (1);
+        velocityCurve = static_cast<SampleType> (1);
+        velocityGain = SampleType {};
         oscillator1Level = static_cast<SampleType> (0.7);
         oscillator2Level = static_cast<SampleType> (0.3);
         noiseLevel = SampleType {};
@@ -75,7 +78,6 @@ struct BasicSynthVoice
     void start (SampleType pitch, SampleType nextVelocity) noexcept
     {
         setPitch (pitch);
-        filter.reset();
 
         if (phaseMode == OscillatorPhaseMode::resetOnNote)
         {
@@ -107,14 +109,42 @@ struct BasicSynthVoice
     {
         velocity = std::clamp (nextVelocity, SampleType {},
                                static_cast<SampleType> (1));
+        updateVelocityGain();
     }
 
-    void setOscillator1Waveform (OscillatorWaveform waveform) noexcept
+    // Sensitivity 0 ignores velocity; 1 applies the full curve. The curve is
+    // a power exponent: 1 is linear, values below 1 lift softer notes, and
+    // values above 1 increase their dynamic contrast.
+    void setVelocitySensitivity (SampleType amount) noexcept
+    {
+        velocitySensitivity = std::isfinite (amount)
+            ? std::clamp (amount, SampleType {}, static_cast<SampleType> (1))
+            : static_cast<SampleType> (1);
+        updateVelocityGain();
+    }
+
+    void setVelocityCurve (SampleType exponent) noexcept
+    {
+        velocityCurve = std::isfinite (exponent)
+            ? std::clamp (exponent, static_cast<SampleType> (0.01),
+                          static_cast<SampleType> (8))
+            : static_cast<SampleType> (1);
+        updateVelocityGain();
+    }
+
+    SampleType getVelocitySensitivity() const noexcept
+    {
+        return velocitySensitivity;
+    }
+
+    SampleType getVelocityCurve() const noexcept { return velocityCurve; }
+
+    void setOscillator1Waveform (NomadOscillatorWaveform waveform) noexcept
     {
         oscillator1.setWaveform (waveform);
     }
 
-    void setOscillator2Waveform (OscillatorWaveform waveform) noexcept
+    void setOscillator2Waveform (NomadOscillatorWaveform waveform) noexcept
     {
         oscillator2.setWaveform (waveform);
     }
@@ -197,7 +227,7 @@ struct BasicSynthVoice
         const auto excitation = oscillator1Level * oscillator1.next()
                               + oscillator2Level * oscillator2.next()
                               + noiseLevel * noise.next();
-        return filter.process (velocity * amplitude * excitation);
+        return filter.process (velocityGain * amplitude * excitation);
     }
 
 private:
@@ -218,6 +248,14 @@ private:
         return std::exp2 (cents / static_cast<SampleType> (1200));
     }
 
+    void updateVelocityGain() noexcept
+    {
+        const auto curved = std::pow (velocity, velocityCurve);
+        velocityGain = static_cast<SampleType> (1)
+                     + velocitySensitivity
+                         * (curved - static_cast<SampleType> (1));
+    }
+
     void updateOscillatorFrequencies() noexcept
     {
         oscillator1.setFrequency (baseFrequency * oscillator1DetuneRatio);
@@ -233,13 +271,16 @@ private:
         }
     }
 
-    Oscillator<SampleType> oscillator1;
-    Oscillator<SampleType> oscillator2;
+    NomadOscillator<SampleType> oscillator1;
+    NomadOscillator<SampleType> oscillator2;
     ADSREnvelope<SampleType> envelope;
     StateVariableFilter<SampleType> filter;
     ColoredNoise<SampleType> noise;
     SampleType sampleRate = static_cast<SampleType> (48000);
     SampleType velocity {};
+    SampleType velocitySensitivity = static_cast<SampleType> (1);
+    SampleType velocityCurve = static_cast<SampleType> (1);
+    SampleType velocityGain {};
     SampleType oscillator1Level {};
     SampleType oscillator2Level {};
     SampleType noiseLevel {};

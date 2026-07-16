@@ -1,42 +1,43 @@
 #pragma once
 
 #include <algorithm>
-#include <array>
 #include <cmath>
+#include <optional>
 #include <type_traits>
 
-#include "chardsp/chardsp_Downsampler4x.h"
+#include "choc/platform/choc_Assert.h"
+#include "choc/platform/choc_DisableAllWarnings.h"
+#include "elliptic-blep.h"
+#include "choc/platform/choc_ReenableAllWarnings.h"
 
 namespace chardsp
 {
 
-enum class OscillatorWaveform
+enum class SawDirection
 {
-    saw,
-    ramp,
-    pulse,
-    triangle,
-    sine
+    descending,
+    ascending
 };
 
-// The five pitched waveform/shape equations from Nomad's oscillator, rendered
-// at 4x and passed through Nomad's fixed two-stage downsampler. Noise remains a
-// separate ColoredNoise source so a synth can mix it independently.
+namespace oscillator_detail
+{
+
 template <typename SampleType>
-struct Oscillator
+struct PhaseState
 {
     static_assert (std::is_same_v<SampleType, float>
                    || std::is_same_v<SampleType, double>,
-                   "Oscillator supports float or double");
+                   "Oscillators support float or double");
 
     void prepare (SampleType newSampleRate) noexcept
     {
-        sampleRate = std::isfinite (newSampleRate) && newSampleRate > 0.0f
+        CHOC_ASSERT (std::isfinite (newSampleRate)
+                     && newSampleRate > SampleType {});
+        sampleRate = std::isfinite (newSampleRate)
+                     && newSampleRate > SampleType {}
             ? newSampleRate : SampleType {};
         frequency = SampleType {};
         phaseIncrement = SampleType {};
-        waveform = OscillatorWaveform::saw;
-        shape = SampleType {};
         reset();
     }
 
@@ -46,206 +47,489 @@ struct Oscillator
             ? newPhase - std::floor (newPhase) : SampleType {};
 
         if (phase < SampleType {})
-            phase += static_cast<SampleType> (1.0);
-
-        cycleIndex = 0;
-        downsampler.reset();
-        downsamplerNeedsReset = false;
-    }
-
-    void setWaveform (OscillatorWaveform nextWaveform) noexcept
-    {
-        if (waveform != nextWaveform)
-        {
-            downsampler.reset();
-            downsamplerNeedsReset = false;
-        }
-
-        waveform = nextWaveform;
+            phase += static_cast<SampleType> (1);
     }
 
     void setFrequency (SampleType newFrequency) noexcept
     {
         if (! std::isfinite (newFrequency))
-            newFrequency = newFrequency > 0.0f && sampleRate > 0.0f
-                ? sampleRate * static_cast<SampleType> (0.49) : SampleType {};
+            newFrequency = newFrequency > SampleType {}
+                         && sampleRate > SampleType {}
+                ? sampleRate * static_cast<SampleType> (0.49)
+                : SampleType {};
 
         frequency = sampleRate > SampleType {}
             ? std::clamp (newFrequency, SampleType {},
                           sampleRate * static_cast<SampleType> (0.49))
             : SampleType {};
         phaseIncrement = sampleRate > SampleType {}
-            ? frequency / (sampleRate * static_cast<SampleType> (4.0))
-            : SampleType {};
+            ? frequency / sampleRate : SampleType {};
     }
 
-    void setShape (SampleType nextShape) noexcept
-    {
-        shape = std::isfinite (nextShape)
-            ? std::clamp (nextShape, SampleType {},
-                          static_cast<SampleType> (1.0))
-            : SampleType {};
-    }
-
-    OscillatorWaveform getWaveform() const noexcept { return waveform; }
-    SampleType getFrequency() const noexcept { return frequency; }
-    SampleType getShape() const noexcept { return shape; }
-
-    // Advances by one output sample without rendering the waveform. This is
-    // the cheap path for a free-running oscillator inside an available voice.
-    // The oversampling filter is reset before rendering resumes so old filter
-    // state cannot reappear after an idle interval.
-    void advance() noexcept
-    {
-        downsamplerNeedsReset = true;
-
-        if (phaseIncrement <= SampleType {})
-            return;
-
-        for (int oversample = 0; oversample < 4; ++oversample)
-            advancePhase();
-    }
-
-    SampleType next() noexcept
-    {
-        if (phaseIncrement <= 0.0f)
-            return SampleType {};
-
-        if (downsamplerNeedsReset)
-        {
-            downsampler.reset();
-            downsamplerNeedsReset = false;
-        }
-
-        std::array<SampleType, 4> oversampled {};
-
-        for (auto& sample : oversampled)
-        {
-            sample = renderAt (phase);
-            advancePhase();
-        }
-
-        return downsampler.process (oversampled);
-    }
-
-private:
-    static constexpr SampleType twoPi = static_cast<SampleType> (
-        6.28318530717958647692);
-
-    void advancePhase() noexcept
+    SampleType advance() noexcept
     {
         phase += phaseIncrement;
 
-        if (phase >= static_cast<SampleType> (1.0))
-        {
-            phase -= static_cast<SampleType> (1.0);
-            ++cycleIndex;
-        }
+        if (phase >= static_cast<SampleType> (1))
+            phase -= static_cast<SampleType> (1);
+
+        return phase;
     }
 
-    SampleType renderAt (SampleType currentPhase) const noexcept
-    {
-        switch (waveform)
-        {
-            case OscillatorWaveform::saw:
-                return renderSaw (currentPhase,
-                                  shape * static_cast<SampleType> (2.0));
-            case OscillatorWaveform::ramp:
-                return renderSaw (currentPhase,
-                                  static_cast<SampleType> (2.0)
-                                      + shape * static_cast<SampleType> (2.0));
-            case OscillatorWaveform::pulse:
-                return currentPhase < pulseWidth()
-                    ? static_cast<SampleType> (1.0)
-                    : static_cast<SampleType> (-1.0);
-            case OscillatorWaveform::triangle:
-                return mirrorFold (rawTriangle (currentPhase) * foldDrive());
-            case OscillatorWaveform::sine:
-                return mirrorFold (std::sin (currentPhase * twoPi)
-                                   * foldDrive());
-        }
-
-        return SampleType {};
-    }
-
-    SampleType renderSaw (SampleType currentPhase,
-                          SampleType sawShape) const noexcept
-    {
-        const auto one = static_cast<SampleType> (1.0);
-        const auto two = static_cast<SampleType> (2.0);
-        const auto three = static_cast<SampleType> (3.0);
-        const auto four = static_cast<SampleType> (4.0);
-        const auto foldDepth = sawShape < one ? sawShape
-                             : sawShape < two ? two - sawShape
-                             : sawShape < three ? sawShape - two
-                                                : four - sawShape;
-        const auto tau = one - foldDepth;
-        const auto baseSign = sawShape < one || sawShape >= three ? one : -one;
-        const auto saw = baseSign * (one - two * currentPhase);
-
-        if (tau >= static_cast<SampleType> (0.999999))
-            return saw;
-
-        const auto cyclePolarity = (cycleIndex & 1) == 0 ? -one : one;
-        const auto polarity = sawShape < two
-            ? cyclePolarity : -cyclePolarity;
-        const auto folded = polarity * saw < -tau ? -saw : saw;
-        return (two * folded - polarity * (one - tau)) / (one + tau);
-    }
-
-    SampleType pulseWidth() const noexcept
-    {
-        constexpr auto edgeGuard = static_cast<SampleType> (0.02);
-        return edgeGuard + shape * (static_cast<SampleType> (1.0)
-                                    - static_cast<SampleType> (2.0) * edgeGuard);
-    }
-
-    SampleType foldDrive() const noexcept
-    {
-        return static_cast<SampleType> (1.0)
-             + shape * static_cast<SampleType> (3.0);
-    }
-
-    static SampleType rawTriangle (SampleType currentPhase) noexcept
-    {
-        return currentPhase < static_cast<SampleType> (0.5)
-            ? currentPhase * static_cast<SampleType> (4.0)
-                - static_cast<SampleType> (1.0)
-            : static_cast<SampleType> (3.0)
-                - currentPhase * static_cast<SampleType> (4.0);
-    }
-
-    static SampleType mirrorFold (SampleType value) noexcept
-    {
-        auto folded = value;
-
-        if (folded > static_cast<SampleType> (1.0))
-        {
-            folded = static_cast<SampleType> (2.0) - folded;
-
-            if (folded < static_cast<SampleType> (-1.0))
-                folded = static_cast<SampleType> (-2.0) - folded;
-        }
-        else if (folded < static_cast<SampleType> (-1.0))
-        {
-            folded = static_cast<SampleType> (-2.0) - folded;
-
-            if (folded > static_cast<SampleType> (1.0))
-                folded = static_cast<SampleType> (2.0) - folded;
-        }
-
-        return folded;
-    }
-
-    Downsampler4x<SampleType> downsampler;
-    OscillatorWaveform waveform = OscillatorWaveform::saw;
     SampleType sampleRate {};
     SampleType frequency {};
     SampleType phase {};
     SampleType phaseIncrement {};
-    SampleType shape {};
-    int cycleIndex = 0;
-    bool downsamplerNeedsReset = false;
+};
+
+template <typename SampleType>
+SampleType polyBlep (SampleType phase, SampleType increment) noexcept
+{
+    if (increment <= SampleType {})
+        return SampleType {};
+
+    if (phase < increment)
+    {
+        const auto t = phase / increment;
+        return t + t - t * t - static_cast<SampleType> (1);
+    }
+
+    if (phase > static_cast<SampleType> (1) - increment)
+    {
+        const auto t = (phase - static_cast<SampleType> (1)) / increment;
+        return t * t + t + t + static_cast<SampleType> (1);
+    }
+
+    return SampleType {};
+}
+
+// Integral of polyBlep in sample-time units. Multiplying this by a
+// per-sample slope jump rounds a continuous waveform's sharp corner.
+template <typename SampleType>
+SampleType polyBlamp (SampleType phase, SampleType increment) noexcept
+{
+    if (increment <= SampleType {})
+        return SampleType {};
+
+    if (phase < increment)
+    {
+        const auto t = phase / increment - static_cast<SampleType> (1);
+        return -(t * t * t) / static_cast<SampleType> (3);
+    }
+
+    if (phase > static_cast<SampleType> (1) - increment)
+    {
+        const auto t = (phase - static_cast<SampleType> (1)) / increment
+                     + static_cast<SampleType> (1);
+        return (t * t * t) / static_cast<SampleType> (3);
+    }
+
+    return SampleType {};
+}
+
+template <typename SampleType>
+SampleType shiftedPhase (SampleType phase, SampleType offset) noexcept
+{
+    auto shifted = phase - offset;
+    return shifted < SampleType {}
+        ? shifted + static_cast<SampleType> (1) : shifted;
+}
+
+template <typename SampleType>
+SampleType saw (SampleType phase, SawDirection direction) noexcept
+{
+    return direction == SawDirection::ascending
+        ? static_cast<SampleType> (2) * phase - static_cast<SampleType> (1)
+        : static_cast<SampleType> (1) - static_cast<SampleType> (2) * phase;
+}
+
+template <typename SampleType>
+SampleType triangle (SampleType phase) noexcept
+{
+    return phase < static_cast<SampleType> (0.5)
+        ? phase * static_cast<SampleType> (4) - static_cast<SampleType> (1)
+        : static_cast<SampleType> (3) - phase * static_cast<SampleType> (4);
+}
+
+template <typename SampleType>
+SampleType sanitisePulseWidth (SampleType width) noexcept
+{
+    return std::isfinite (width)
+        ? std::clamp (width, static_cast<SampleType> (0.001),
+                      static_cast<SampleType> (0.999))
+        : static_cast<SampleType> (0.5);
+}
+
+template <typename SampleType>
+struct EllipticState
+{
+    void prepare (SampleType sampleRate) noexcept
+    {
+        phase.prepare (sampleRate);
+
+        if (phase.sampleRate > SampleType {})
+            blep.emplace (phase.sampleRate);
+        else
+            blep.reset();
+
+        allpass.reset();
+    }
+
+    void reset (SampleType newPhase = SampleType {}) noexcept
+    {
+        phase.reset (newPhase);
+
+        if (blep)
+            blep->reset();
+
+        allpass.reset();
+    }
+
+    void setFrequency (SampleType frequency) noexcept
+    {
+        phase.setFrequency (frequency);
+    }
+
+    SampleType getFrequency() const noexcept { return phase.frequency; }
+
+    PhaseState<SampleType> phase;
+    std::optional<signalsmith::blep::EllipticBlep<SampleType>> blep;
+    signalsmith::blep::EllipticBlepAllpass<SampleType> allpass;
+};
+
+} // namespace oscillator_detail
+
+template <typename SampleType>
+struct NaiveSawOscillator
+{
+    void prepare (SampleType sampleRate) noexcept { state.prepare (sampleRate); }
+    void reset (SampleType phase = SampleType {}) noexcept { state.reset (phase); }
+    void setFrequency (SampleType frequency) noexcept { state.setFrequency (frequency); }
+    SampleType getFrequency() const noexcept { return state.frequency; }
+    void setDirection (SawDirection nextDirection) noexcept { direction = nextDirection; }
+    SawDirection getDirection() const noexcept { return direction; }
+    void advance() noexcept { state.advance(); }
+
+    SampleType next() noexcept
+    {
+        if (state.phaseIncrement <= SampleType {})
+            return SampleType {};
+
+        return oscillator_detail::saw (state.advance(), direction);
+    }
+
+private:
+    oscillator_detail::PhaseState<SampleType> state;
+    SawDirection direction = SawDirection::descending;
+};
+
+template <typename SampleType>
+struct NaivePulseOscillator
+{
+    void prepare (SampleType sampleRate) noexcept { state.prepare (sampleRate); }
+    void reset (SampleType phase = SampleType {}) noexcept { state.reset (phase); }
+    void setFrequency (SampleType frequency) noexcept { state.setFrequency (frequency); }
+    SampleType getFrequency() const noexcept { return state.frequency; }
+    void setPulseWidth (SampleType width) noexcept
+    {
+        pulseWidth = oscillator_detail::sanitisePulseWidth (width);
+    }
+    SampleType getPulseWidth() const noexcept { return pulseWidth; }
+    void advance() noexcept { state.advance(); }
+
+    SampleType next() noexcept
+    {
+        if (state.phaseIncrement <= SampleType {})
+            return SampleType {};
+
+        return state.advance() < pulseWidth
+            ? static_cast<SampleType> (1) : static_cast<SampleType> (-1);
+    }
+
+private:
+    oscillator_detail::PhaseState<SampleType> state;
+    SampleType pulseWidth = static_cast<SampleType> (0.5);
+};
+
+template <typename SampleType>
+struct NaiveTriangleOscillator
+{
+    void prepare (SampleType sampleRate) noexcept { state.prepare (sampleRate); }
+    void reset (SampleType phase = SampleType {}) noexcept { state.reset (phase); }
+    void setFrequency (SampleType frequency) noexcept { state.setFrequency (frequency); }
+    SampleType getFrequency() const noexcept { return state.frequency; }
+    void advance() noexcept { state.advance(); }
+
+    SampleType next() noexcept
+    {
+        if (state.phaseIncrement <= SampleType {})
+            return SampleType {};
+
+        return oscillator_detail::triangle (state.advance());
+    }
+
+private:
+    oscillator_detail::PhaseState<SampleType> state;
+};
+
+template <typename SampleType>
+struct SineOscillator
+{
+    void prepare (SampleType sampleRate) noexcept { state.prepare (sampleRate); }
+    void reset (SampleType phase = SampleType {}) noexcept { state.reset (phase); }
+    void setFrequency (SampleType frequency) noexcept { state.setFrequency (frequency); }
+    SampleType getFrequency() const noexcept { return state.frequency; }
+    void advance() noexcept { state.advance(); }
+
+    SampleType next() noexcept
+    {
+        if (state.phaseIncrement <= SampleType {})
+            return SampleType {};
+
+        return std::sin (state.advance() * static_cast<SampleType> (
+            6.28318530717958647692));
+    }
+
+private:
+    oscillator_detail::PhaseState<SampleType> state;
+};
+
+template <typename SampleType>
+struct PolyBLEPSawOscillator
+{
+    void prepare (SampleType sampleRate) noexcept { state.prepare (sampleRate); }
+    void reset (SampleType phase = SampleType {}) noexcept { state.reset (phase); }
+    void setFrequency (SampleType frequency) noexcept { state.setFrequency (frequency); }
+    SampleType getFrequency() const noexcept { return state.frequency; }
+    void setDirection (SawDirection nextDirection) noexcept { direction = nextDirection; }
+    SawDirection getDirection() const noexcept { return direction; }
+    void advance() noexcept { state.advance(); }
+
+    SampleType next() noexcept
+    {
+        if (state.phaseIncrement <= SampleType {})
+            return SampleType {};
+
+        const auto phase = state.advance();
+        const auto correction = oscillator_detail::polyBlep (
+            phase, state.phaseIncrement);
+        return oscillator_detail::saw (phase, direction)
+             + (direction == SawDirection::ascending ? -correction : correction);
+    }
+
+private:
+    oscillator_detail::PhaseState<SampleType> state;
+    SawDirection direction = SawDirection::descending;
+};
+
+template <typename SampleType>
+struct PolyBLEPPulseOscillator
+{
+    void prepare (SampleType sampleRate) noexcept { state.prepare (sampleRate); }
+    void reset (SampleType phase = SampleType {}) noexcept { state.reset (phase); }
+    void setFrequency (SampleType frequency) noexcept { state.setFrequency (frequency); }
+    SampleType getFrequency() const noexcept { return state.frequency; }
+    void setPulseWidth (SampleType width) noexcept
+    {
+        pulseWidth = oscillator_detail::sanitisePulseWidth (width);
+    }
+    SampleType getPulseWidth() const noexcept { return pulseWidth; }
+    void advance() noexcept { state.advance(); }
+
+    SampleType next() noexcept
+    {
+        if (state.phaseIncrement <= SampleType {})
+            return SampleType {};
+
+        const auto phase = state.advance();
+        const auto shifted = oscillator_detail::shiftedPhase (phase, pulseWidth);
+        return (phase < pulseWidth ? static_cast<SampleType> (1)
+                                   : static_cast<SampleType> (-1))
+             + oscillator_detail::polyBlep (phase, state.phaseIncrement)
+             - oscillator_detail::polyBlep (shifted, state.phaseIncrement);
+    }
+
+private:
+    oscillator_detail::PhaseState<SampleType> state;
+    SampleType pulseWidth = static_cast<SampleType> (0.5);
+};
+
+template <typename SampleType>
+struct PolyBLEPTriangleOscillator
+{
+    void prepare (SampleType sampleRate) noexcept { state.prepare (sampleRate); }
+    void reset (SampleType phase = SampleType {}) noexcept { state.reset (phase); }
+    void setFrequency (SampleType frequency) noexcept { state.setFrequency (frequency); }
+    SampleType getFrequency() const noexcept { return state.frequency; }
+    void advance() noexcept { state.advance(); }
+
+    SampleType next() noexcept
+    {
+        if (state.phaseIncrement <= SampleType {})
+            return SampleType {};
+
+        const auto phase = state.advance();
+        const auto corner = oscillator_detail::shiftedPhase (
+            phase, static_cast<SampleType> (0.5));
+        const auto slopeJump = static_cast<SampleType> (8)
+                             * state.phaseIncrement;
+        return oscillator_detail::triangle (phase)
+             + slopeJump * oscillator_detail::polyBlamp (
+                   phase, state.phaseIncrement)
+             - slopeJump * oscillator_detail::polyBlamp (
+                   corner, state.phaseIncrement);
+    }
+
+private:
+    oscillator_detail::PhaseState<SampleType> state;
+};
+
+template <typename SampleType>
+struct EllipticSawOscillator
+{
+    void prepare (SampleType sampleRate) noexcept { state.prepare (sampleRate); }
+    void reset (SampleType phase = SampleType {}) noexcept { state.reset (phase); }
+    void setFrequency (SampleType frequency) noexcept { state.setFrequency (frequency); }
+    SampleType getFrequency() const noexcept { return state.getFrequency(); }
+    void setDirection (SawDirection nextDirection) noexcept { direction = nextDirection; }
+    SawDirection getDirection() const noexcept { return direction; }
+    void advance() noexcept { (void) next(); }
+
+    SampleType next() noexcept
+    {
+        auto& phase = state.phase;
+
+        if (! state.blep || phase.phaseIncrement <= SampleType {})
+            return SampleType {};
+
+        const auto endPhase = phase.phase + phase.phaseIncrement;
+        state.blep->step();
+        phase.phase = endPhase;
+
+        if (phase.phase >= static_cast<SampleType> (1))
+        {
+            const auto samplesInPast = (phase.phase - static_cast<SampleType> (1))
+                                     / phase.phaseIncrement;
+            phase.phase -= static_cast<SampleType> (1);
+            const auto step = direction == SawDirection::ascending
+                ? static_cast<SampleType> (-2) : static_cast<SampleType> (2);
+            state.blep->add (step, 1, samplesInPast);
+        }
+
+        return state.allpass (oscillator_detail::saw (phase.phase, direction)
+                              + state.blep->get());
+    }
+
+private:
+    oscillator_detail::EllipticState<SampleType> state;
+    SawDirection direction = SawDirection::descending;
+};
+
+template <typename SampleType>
+struct EllipticPulseOscillator
+{
+    void prepare (SampleType sampleRate) noexcept { state.prepare (sampleRate); }
+    void reset (SampleType phase = SampleType {}) noexcept { state.reset (phase); }
+    void setFrequency (SampleType frequency) noexcept { state.setFrequency (frequency); }
+    SampleType getFrequency() const noexcept { return state.getFrequency(); }
+    void setPulseWidth (SampleType width) noexcept
+    {
+        pulseWidth = oscillator_detail::sanitisePulseWidth (width);
+    }
+    SampleType getPulseWidth() const noexcept { return pulseWidth; }
+    void advance() noexcept { (void) next(); }
+
+    SampleType next() noexcept
+    {
+        auto& phase = state.phase;
+
+        if (! state.blep || phase.phaseIncrement <= SampleType {})
+            return SampleType {};
+
+        const auto startPhase = phase.phase;
+        const auto endPhase = startPhase + phase.phaseIncrement;
+        state.blep->step();
+
+        if (startPhase < pulseWidth && endPhase >= pulseWidth)
+            state.blep->add (static_cast<SampleType> (-2), 1,
+                             (endPhase - pulseWidth) / phase.phaseIncrement);
+
+        if (endPhase >= static_cast<SampleType> (1))
+        {
+            state.blep->add (static_cast<SampleType> (2), 1,
+                             (endPhase - static_cast<SampleType> (1))
+                                 / phase.phaseIncrement);
+
+            const auto wrappedEnd = endPhase - static_cast<SampleType> (1);
+
+            if (wrappedEnd >= pulseWidth)
+                state.blep->add (static_cast<SampleType> (-2), 1,
+                                 (wrappedEnd - pulseWidth)
+                                     / phase.phaseIncrement);
+
+            phase.phase = wrappedEnd;
+        }
+        else
+        {
+            phase.phase = endPhase;
+        }
+
+        const auto naive = phase.phase < pulseWidth
+            ? static_cast<SampleType> (1) : static_cast<SampleType> (-1);
+        return state.allpass (naive + state.blep->get());
+    }
+
+private:
+    oscillator_detail::EllipticState<SampleType> state;
+    SampleType pulseWidth = static_cast<SampleType> (0.5);
+};
+
+template <typename SampleType>
+struct EllipticTriangleOscillator
+{
+    void prepare (SampleType sampleRate) noexcept { state.prepare (sampleRate); }
+    void reset (SampleType phase = SampleType {}) noexcept { state.reset (phase); }
+    void setFrequency (SampleType frequency) noexcept { state.setFrequency (frequency); }
+    SampleType getFrequency() const noexcept { return state.getFrequency(); }
+    void advance() noexcept { (void) next(); }
+
+    SampleType next() noexcept
+    {
+        auto& phase = state.phase;
+
+        if (! state.blep || phase.phaseIncrement <= SampleType {})
+            return SampleType {};
+
+        const auto startPhase = phase.phase;
+        const auto endPhase = startPhase + phase.phaseIncrement;
+        const auto slopeJump = static_cast<SampleType> (8)
+                             * phase.phaseIncrement;
+        state.blep->step();
+
+        if (startPhase < static_cast<SampleType> (0.5)
+            && endPhase >= static_cast<SampleType> (0.5))
+            state.blep->add (-slopeJump, 2,
+                             (endPhase - static_cast<SampleType> (0.5))
+                                 / phase.phaseIncrement);
+
+        if (endPhase >= static_cast<SampleType> (1))
+        {
+            state.blep->add (slopeJump, 2,
+                             (endPhase - static_cast<SampleType> (1))
+                                 / phase.phaseIncrement);
+            phase.phase = endPhase - static_cast<SampleType> (1);
+        }
+        else
+        {
+            phase.phase = endPhase;
+        }
+
+        return state.allpass (oscillator_detail::triangle (phase.phase)
+                              + state.blep->get());
+    }
+
+private:
+    oscillator_detail::EllipticState<SampleType> state;
 };
 
 } // namespace chardsp

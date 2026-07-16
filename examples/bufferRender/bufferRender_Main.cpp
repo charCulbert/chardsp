@@ -4,7 +4,7 @@
 #include <iostream>
 #include <limits>
 
-#include "chardsp/chardsp_EllipticSawOscillator.h"
+#include "chardsp/chardsp_Oscillator.h"
 #include "chardsp/chardsp_SmoothedValue.h"
 #include "choc/audio/choc_AudioFileFormat_WAV.h"
 #include "choc/audio/choc_SampleBuffers.h"

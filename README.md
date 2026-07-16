@@ -1,12 +1,12 @@
 # chardsp
 
 `chardsp` is a small header-only collection of audio DSP primitives. It
-contains a finite linear smoother, a Signalsmith elliptic-BLEP saw oscillator,
-a five-waveform Nomad oscillator, an ADSR envelope, a lowpass/bandpass/highpass
-state-variable filter, a discrete colored-noise generator, a 4x downsampler,
-release-aware voice-slot management, and protocol-neutral mono/legato/
-portamento policy. It uses CHOC buffer views directly in block-oriented
-callers.
+contains a finite linear smoother, naive/PolyBLEP/elliptic oscillator families,
+a separate five-waveform Nomad oscillator, an ADSR envelope, a
+lowpass/bandpass/highpass state-variable filter, a discrete colored-noise
+generator, a 4x downsampler, release-aware voice-slot management, and
+protocol-neutral mono/legato/portamento policy. It uses CHOC buffer views
+directly in block-oriented callers.
 
 Runtime events, parameter schemas and state, MIDI mapping, scheduling,
 diagnostics transport, device hosting, UI, WebViews and command-line handling
@@ -43,8 +43,8 @@ Include headers directly:
 
 ```cpp
 #include "chardsp/chardsp_SmoothedValue.h"
-#include "chardsp/chardsp_EllipticSawOscillator.h"
 #include "chardsp/chardsp_Oscillator.h"
+#include "chardsp/chardsp_NomadOscillators.h"
 #include "chardsp/chardsp_ADSREnvelope.h"
 #include "chardsp/chardsp_BasicSynthVoice.h"
 #include "chardsp/chardsp_StateVariableFilter.h"
@@ -69,7 +69,7 @@ All sample-processing types are direct `float`/`double` templates. Select the
 precision at the use site, for example:
 
 ```cpp
-chardsp::Oscillator<float> realtimeOscillator;
+chardsp::PolyBLEPSawOscillator<float> realtimeOscillator;
 chardsp::StateVariableFilter<double> analysisFilter;
 ```
 
@@ -105,14 +105,25 @@ independently.
   coefficients. `process()` accepts either four scalar oversamples or a
   `std::array<SampleType, 4>`. It owns only fixed filter state and exposes no
   coefficient or oversampling policy.
-- `Oscillator<SampleType>` adds Nomad's pitched `saw`, `ramp`, `pulse`, `triangle`, and
-  `sine` waveform/shape equations. It renders at 4x through `Downsampler4x` and
-  exposes immediate waveform, frequency, shape, and phase-reset control.
-  `advance()` moves the phase by one output sample without rendering, allowing
-  a voice to preserve true free-running phase cheaply while it is available.
-  Nomad's hard sync, micro-drift, two-oscillator routing, and physical models
-  remain higher-level policy. Noise stays a separate `ColoredNoise` source so
-  consumers can give it an explicit level and color.
+- `chardsp_Oscillator.h` contains explicit algorithm choices rather than one
+  oscillator with hidden quality policy. `NaiveSawOscillator`,
+  `NaivePulseOscillator`, `NaiveTriangleOscillator`, and `SineOscillator`
+  render their equations directly. `PolyBLEPSawOscillator`,
+  `PolyBLEPPulseOscillator`, and `PolyBLEPTriangleOscillator` correct value or
+  slope discontinuities with polynomial transitions. `EllipticSawOscillator`,
+  `EllipticPulseOscillator`, and `EllipticTriangleOscillator` use Signalsmith's
+  order-1 BLEP for value jumps and order-2 BLAMP for triangle corners. Saw
+  classes expose `SawDirection::descending` and `SawDirection::ascending`;
+  pulse classes expose pulse width. Every class has the same `prepare()`,
+  `reset()`, `setFrequency()`, `getFrequency()`, `advance()`, and `next()`
+  lifecycle. None oversamples internally.
+- `NomadOscillator<SampleType>` in `chardsp_NomadOscillators.h` preserves
+  Nomad's combined `saw`, `ramp`, `pulse`, shaped/folded `triangle`, and
+  shaped/folded `sine` interface. Its shape semantics and internal 4x path are
+  intentionally isolated here rather than being properties of a generic
+  oscillator. Noise remains a separate `ColoredNoise` source. Hard sync,
+  micro-drift, two-oscillator routing, and physical models remain higher-level
+  policy.
 - `VoicePool<Voice, voiceCount, Key>` owns a fixed array of the consumer's
   `Voice` type and presents the protocol-neutral API `prepare()`, `start()`,
   `stop()`, `setSustain()`, `allKeysOff()`, and `next()`. `Key` is a small
@@ -136,12 +147,17 @@ independently.
   frame and owns its available-state fast path; it can return zero immediately
   or advance a free-running source first. No base class, virtual call, or
   runtime allocation is introduced.
-- `BasicSynthVoice<SampleType>` composes two five-waveform oscillators and
+- `BasicSynthVoice<SampleType>` composes two `NomadOscillator` instances and
   colored noise into an ADSR and LP/BP/HP filter. It accepts fractional
-  semitone pitch and velocity directly, exposes the component parameters, and
-  implements the `release()`, forced-fade, availability, and `next()` side of
-  the `VoicePool` contract. A tiny consumer wrapper maps its own input-key type
-  to pitch, keeping MIDI and hardware scanning out of the DSP class.
+  semitone pitch and velocity directly. Velocity scales the normalized ADSR
+  level in the voice, following the same separation used by JUCE's ADSR and
+  synthesiser voices. `setVelocitySensitivity()` blends from fixed level to
+  full velocity response; `setVelocityCurve()` selects a power exponent where
+  `1` is linear, values below `1` lift softer notes, and values above `1`
+  increase dynamic contrast. The voice exposes its other component parameters
+  and implements the `release()`, forced-fade, availability, and `next()` side
+  of the `VoicePool` contract. A tiny consumer wrapper maps its own input-key
+  type to pitch, keeping MIDI and hardware scanning out of the DSP class.
 - `MonoVoiceController<SampleType, Key, heldCapacity>` implements Nomad's
   last-note-priority monophonic policy without owning a DSP voice or knowing
   about MIDI. It returns simple pitch/release actions for the consumer to
