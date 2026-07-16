@@ -228,6 +228,11 @@ struct VoicePool
         return voice >= 0;
     }
 
+    bool isPending (const Key& key) const noexcept
+    {
+        return findPendingVoice (key) >= 0;
+    }
+
 private:
     struct VoiceState
     {

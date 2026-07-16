@@ -4,8 +4,9 @@
 contains a finite linear smoother, a Signalsmith elliptic-BLEP saw oscillator,
 a five-waveform Nomad oscillator, an ADSR envelope, a lowpass/bandpass/highpass
 state-variable filter, a discrete colored-noise generator, a 4x downsampler,
-and release-aware voice-slot management. It uses CHOC buffer views directly in
-block-oriented callers.
+release-aware voice-slot management, and protocol-neutral mono/legato/
+portamento policy. It uses CHOC buffer views directly in block-oriented
+callers.
 
 Runtime events, parameter schemas and state, MIDI mapping, scheduling,
 diagnostics transport, device hosting, UI, WebViews and command-line handling
@@ -45,10 +46,13 @@ Include headers directly:
 #include "chardsp/chardsp_EllipticSawOscillator.h"
 #include "chardsp/chardsp_Oscillator.h"
 #include "chardsp/chardsp_ADSREnvelope.h"
+#include "chardsp/chardsp_BasicSynthVoice.h"
 #include "chardsp/chardsp_StateVariableFilter.h"
 #include "chardsp/chardsp_ColoredNoise.h"
 #include "chardsp/chardsp_Downsampler4x.h"
 #include "chardsp/chardsp_VoicePool.h"
+#include "chardsp/chardsp_MonoVoiceController.h"
+#include "chardsp/chardsp_Portamento.h"
 ```
 
 Or add the repository and link its usage requirements:
@@ -132,6 +136,25 @@ independently.
   frame and owns its available-state fast path; it can return zero immediately
   or advance a free-running source first. No base class, virtual call, or
   runtime allocation is introduced.
+- `BasicSynthVoice<SampleType>` composes two five-waveform oscillators and
+  colored noise into an ADSR and LP/BP/HP filter. It accepts fractional
+  semitone pitch and velocity directly, exposes the component parameters, and
+  implements the `release()`, forced-fade, availability, and `next()` side of
+  the `VoicePool` contract. A tiny consumer wrapper maps its own input-key type
+  to pitch, keeping MIDI and hardware scanning out of the DSP class.
+- `MonoVoiceController<SampleType, Key, heldCapacity>` implements Nomad's
+  last-note-priority monophonic policy without owning a DSP voice or knowing
+  about MIDI. It returns simple pitch/release actions for the consumer to
+  apply. Legato suppresses envelope retriggers while the gate is active and
+  uses the Cmajor implementation's 24 ms grace window for closely spaced
+  notes. Sustain, fallback to the newest still-held key, and off/always/
+  fingered `PortamentoMode` choices are included. The held-key capacity is an
+  explicit compile-time choice instead of a hidden 16- or 32-note limit.
+- `Portamento<SampleType>` interpolates in semitone pitch space with Nomad's
+  exact linear-to-analog shape curve. `setTimeRateMorph(0)` gives constant
+  time, `setTimeRateMorph(1)` gives constant time per octave, and intermediate
+  values continuously blend those policies. Pitch-to-frequency conversion and
+  pitch bend remain consumer concerns, so bend can be applied after glide.
 
 All components are in `namespace chardsp`; their reset, parameter, allocation,
 and per-sample methods are `noexcept`.

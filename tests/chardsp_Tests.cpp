@@ -10,10 +10,13 @@
 #include <type_traits>
 
 #include "chardsp/chardsp_ADSREnvelope.h"
+#include "chardsp/chardsp_BasicSynthVoice.h"
 #include "chardsp/chardsp_ColoredNoise.h"
 #include "chardsp/chardsp_Downsampler4x.h"
 #include "chardsp/chardsp_EllipticSawOscillator.h"
+#include "chardsp/chardsp_MonoVoiceController.h"
 #include "chardsp/chardsp_Oscillator.h"
+#include "chardsp/chardsp_Portamento.h"
 #include "chardsp/chardsp_SmoothedValue.h"
 #include "chardsp/chardsp_StateVariableFilter.h"
 #include "chardsp/chardsp_VoicePool.h"
@@ -886,6 +889,10 @@ void testDoublePrecisionTypes (choc::test::TestProgress& progress)
     ellipticSaw.prepare (48000.0);
     ellipticSaw.setFrequency (440.0);
 
+    chardsp::BasicSynthVoice<double> basicVoice;
+    basicVoice.prepare (48000.0, 3);
+    basicVoice.start (69.0, 0.8);
+
     const auto allocationsBeforeRender = allocationCount.load();
     bool allFinite = true;
 
@@ -899,7 +906,8 @@ void testDoublePrecisionTypes (choc::test::TestProgress& progress)
         const auto downsampled = downsampler.process (
             filtered, filtered * 0.5, -filtered * 0.25, filtered * 0.125);
         allFinite = allFinite && std::isfinite (downsampled)
-                   && std::isfinite (ellipticSaw.next());
+                   && std::isfinite (ellipticSaw.next())
+                   && std::isfinite (basicVoice.next());
     }
 
     CHECK (allFinite);
@@ -1107,6 +1115,7 @@ void testVoicePool (choc::test::TestProgress& progress)
     single.prepare (1000.0f);
     single.start (60, 1.0f);
     single.start (67, 0.5f);
+    CHECK (single.isPending (67));
     CHECK (single.findVoice (60) == -1);
     CHECK (single.findVoice (67) == 0);
     CHECK (single.getVoice (0).forcedReleaseCount == 1);
@@ -1115,6 +1124,7 @@ void testVoicePool (choc::test::TestProgress& progress)
     CHECK (single.getVoice (0).startCount == 1);
     single.next();
     CHECK (single.getVoice (0).startCount == 2);
+    CHECK (! single.isPending (67));
     CHECK (single.getVoice (0).lastRenderedStartCount == 1);
     single.next();
     CHECK (single.getVoice (0).lastRenderedStartCount == 2);
@@ -1313,6 +1323,127 @@ void testVoicePool (choc::test::TestProgress& progress)
     CHECK (allocationCount.load() == allocationsBeforeExercise);
 }
 
+void testPortamento (choc::test::TestProgress& progress)
+{
+    chardsp::Portamento<float> glide;
+    glide.prepare (100.0f);
+    glide.reset (60.0f);
+    glide.setTime (1.0f);
+    glide.setShape (0.0f);
+    glide.setTimeRateMorph (0.0f);
+    glide.setTarget (72.0f, true);
+
+    CHECK (near (glide.next(), 60.0f));
+
+    for (int i = 1; i < 50; ++i)
+        glide.next();
+
+    CHECK (near (glide.next(), 66.0f));
+
+    for (int i = 51; i <= 100; ++i)
+        glide.next();
+
+    CHECK (near (glide.next(), 72.0f));
+    CHECK (! glide.isGliding());
+
+    // At full rate scaling, a half-octave takes half the configured time.
+    glide.reset (60.0f);
+    glide.setTimeRateMorph (1.0f);
+    glide.setTarget (66.0f, true);
+
+    for (int i = 0; i < 50; ++i)
+        glide.next();
+
+    CHECK (! glide.isGliding());
+    CHECK (near (glide.next(), 66.0f));
+
+    // The curved endpoint is the active Nomad analog-shape equation.
+    glide.reset (60.0f);
+    glide.setTimeRateMorph (0.0f);
+    glide.setShape (1.0f);
+    glide.setTarget (72.0f, true);
+
+    for (int i = 0; i < 50; ++i)
+        glide.next();
+
+    const auto strength = 6.0f;
+    const auto analog = (1.0f - std::exp (-strength * 0.5f))
+                      / (1.0f - std::exp (-strength));
+    CHECK (near (glide.next(), 60.0f + 12.0f * analog, 0.00001f));
+
+    glide.setTarget (48.0f, false);
+    CHECK (near (glide.next(), 48.0f));
+}
+
+void testMonoVoiceController (choc::test::TestProgress& progress)
+{
+    using Controller = chardsp::MonoVoiceController<float, int, 8>;
+    Controller mono;
+    mono.prepare (1000.0f);
+    mono.setLegato (true);
+    mono.setPortamentoMode (chardsp::PortamentoMode::fingered);
+
+    auto action = mono.start (1, 60.0f, 0.8f);
+    CHECK (action.hasPitch() && action.trigger && ! action.glide);
+    action = mono.start (2, 64.0f, 0.7f);
+    CHECK (action.hasPitch() && ! action.trigger && action.glide);
+
+    // Last-note priority falls back without retriggering the envelope.
+    action = mono.stop (2);
+    CHECK (action.hasPitch() && near (action.pitch, 60.0f));
+    CHECK (! action.trigger && action.glide);
+
+    // Legato delays the final gate-off by Nomad Cmajor's 24 ms grace window.
+    CHECK (! mono.stop (1).shouldRelease());
+    CHECK (mono.hasPendingGateOff());
+
+    for (int i = 0; i < 23; ++i)
+        CHECK (! mono.next().shouldRelease());
+
+    CHECK (mono.next().shouldRelease());
+    CHECK (! mono.isGateActive());
+
+    // A new note in that grace window cancels the release and stays legato.
+    mono.reset();
+    mono.setLegato (true);
+    mono.start (1, 60.0f, 1.0f);
+    mono.stop (1);
+
+    for (int i = 0; i < 10; ++i)
+        mono.next();
+
+    action = mono.start (2, 67.0f, 1.0f);
+    CHECK (action.hasPitch() && ! action.trigger);
+    CHECK (! mono.hasPendingGateOff());
+
+    // Always glides across a gap; fingered glides only while a key is held.
+    mono.reset();
+    mono.setLegato (false);
+    mono.setPortamentoMode (chardsp::PortamentoMode::always);
+    mono.start (1, 60.0f, 1.0f);
+    CHECK (mono.stop (1).shouldRelease());
+    CHECK (mono.start (2, 72.0f, 1.0f).glide);
+    mono.stop (2);
+    mono.setPortamentoMode (chardsp::PortamentoMode::fingered);
+    CHECK (! mono.start (3, 67.0f, 1.0f).glide);
+
+    // Sustain owns only the gate; releasing it ends a voice with no held key.
+    mono.reset();
+    mono.setSustain (true);
+    mono.start (1, 60.0f, 1.0f);
+    CHECK (! mono.stop (1).shouldRelease());
+    CHECK (mono.isGateActive());
+    CHECK (mono.setSustain (false).shouldRelease());
+
+    // Capacity is explicit and fixed rather than a MIDI-sized hidden limit.
+    chardsp::MonoVoiceController<double, uint64_t, 2> small;
+    small.prepare (48000.0);
+    small.start (1000, 60.0, 1.0);
+    small.start (2000, 62.0, 1.0);
+    small.start (3000, 64.0, 1.0);
+    CHECK (small.getHeldCount() == 2);
+}
+
 static_assert (std::is_nothrow_default_constructible_v<chardsp::ADSREnvelope<float>>);
 static_assert (std::is_nothrow_default_constructible_v<chardsp::StateVariableFilter<float>>);
 static_assert (std::is_nothrow_default_constructible_v<chardsp::ColoredNoise<float>>);
@@ -1320,6 +1451,12 @@ static_assert (std::is_nothrow_default_constructible_v<chardsp::Downsampler4x<fl
 static_assert (std::is_nothrow_default_constructible_v<chardsp::Oscillator<float>>);
 static_assert (std::is_nothrow_default_constructible_v<
                chardsp::VoicePool<TestVoice, 4>>);
+static_assert (std::is_nothrow_default_constructible_v<
+               chardsp::Portamento<double>>);
+static_assert (std::is_nothrow_default_constructible_v<
+               chardsp::MonoVoiceController<double, uint64_t, 64>>);
+static_assert (std::is_nothrow_default_constructible_v<
+               chardsp::BasicSynthVoice<double>>);
 
 } // namespace
 
@@ -1363,6 +1500,8 @@ int main()
     { CHOC_TEST (downsampler_behavior); testDownsamplerBehavior (progress); }
     { CHOC_TEST (double_precision_types); testDoublePrecisionTypes (progress); }
     { CHOC_TEST (voice_pool); testVoicePool (progress); }
+    { CHOC_TEST (portamento); testPortamento (progress); }
+    { CHOC_TEST (mono_voice_controller); testMonoVoiceController (progress); }
 
     progress.printReport();
     return progress.numFails == 0 ? 0 : 1;
