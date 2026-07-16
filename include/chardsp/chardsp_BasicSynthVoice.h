@@ -216,7 +216,7 @@ struct BasicSynthVoice
             return SampleType {};
         }
 
-        const auto amplitude = envelope.next();
+        const auto normalizedEnvelope = envelope.next();
 
         if (! envelope.isActive())
         {
@@ -227,7 +227,8 @@ struct BasicSynthVoice
         const auto excitation = oscillator1Level * oscillator1.next()
                               + oscillator2Level * oscillator2.next()
                               + noiseLevel * noise.next();
-        return filter.process (velocityGain * amplitude * excitation);
+        const auto envelopeLevel = velocityGain * normalizedEnvelope;
+        return filter.process (envelopeLevel * excitation);
     }
 
 private:

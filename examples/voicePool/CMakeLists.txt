@@ -1,0 +1,2 @@
+add_executable(chardsp_voice_pool voicePool_Main.cpp)
+target_link_libraries(chardsp_voice_pool PRIVATE chardsp)

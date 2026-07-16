@@ -1,0 +1,2 @@
+add_executable(chardsp_basic_synth_voice basicSynthVoice_Main.cpp)
+target_link_libraries(chardsp_basic_synth_voice PRIVATE chardsp)

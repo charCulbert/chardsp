@@ -184,6 +184,12 @@ ctest --test-dir build --output-on-failure
 ./build/examples/bufferRender/chardsp_buffer_render chardsp_render.wav
 ```
 
+See [the example catalog](examples/README.md) for small, one-file programs that
+demonstrate each oscillator family, ADSR and velocity scaling, every filter and
+noise mode, explicit 4x downsampling, voice stealing, mono portamento, and a
+complete basic voice. The component examples come before the integrated voice
+so each policy remains easy to find and copy.
+
 `bufferRender` remains the focused two-second elliptic-BLEP saw example. It
 applies explicit fade-in and fade-out smoothing, and uses CHOC's WAV writer to
 create a 48 kHz, 16-bit stereo file. The output path is optional and defaults

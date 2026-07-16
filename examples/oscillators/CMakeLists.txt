@@ -1,0 +1,2 @@
+add_executable(chardsp_oscillators oscillators_Main.cpp)
+target_link_libraries(chardsp_oscillators PRIVATE chardsp)
