@@ -1,12 +1,13 @@
 # chardsp
 
 `chardsp` is a small header-only collection of audio DSP primitives. It
-contains a finite linear smoother, naive/PolyBLEP/elliptic oscillator families,
-a separate five-waveform Nomad oscillator, an ADSR envelope, a
-lowpass/bandpass/highpass state-variable filter, a discrete colored-noise
-generator, a 4x downsampler, release-aware voice-slot management, and
-protocol-neutral mono/legato/portamento policy. It uses CHOC buffer views
-directly in block-oriented callers.
+contains fixed delay, gain/crossfade and smoothing utilities, DC/SVF/biquad
+filters, peak/RMS/envelope detectors, caller-owned sample playback,
+naive/PolyBLEP/elliptic oscillator families, a separate five-waveform Nomad
+oscillator, an ADSR envelope, colored noise, a specialized 4x downsampler,
+complete 2x/4x oversampling, release-aware voice-slot management, and
+protocol-neutral mono/legato/portamento policy. It uses CHOC views directly in
+block-oriented callers.
 
 Runtime events, parameter schemas and state, MIDI mapping, scheduling,
 diagnostics transport, device hosting, UI, WebViews and command-line handling
@@ -14,12 +15,17 @@ do not belong in this repository.
 
 ## Dependencies
 
-CHOC and Signalsmith `elliptic-blep` are pinned Git submodules:
+CHOC, Signalsmith DSP, and Signalsmith `elliptic-blep` are pinned Git
+submodules:
 
 ```text
 external/choc
 external/elliptic-blep
+external/signalsmith-dsp
 ```
+
+Signalsmith DSP is pinned to revision
+`2d20161915e733f117545c6be8cd3275a739a1e3` (`v1.7.1`).
 
 Clone recursively:
 
@@ -33,9 +39,18 @@ For an existing checkout:
 git submodule update --init --recursive
 ```
 
-CHOC is ISC-licensed and Signalsmith `elliptic-blep` is MIT-licensed. Their
-license notices remain in their respective submodules. The source project did
-not establish a project license, so this extraction does not invent one.
+CHOC is ISC-licensed. Signalsmith DSP and Signalsmith `elliptic-blep` are
+MIT-licensed. Their license notices remain in their respective submodules.
+chardsp is ISC-licensed; see [LICENSE](LICENSE).
+
+Runtime notice collection and source distribution are separate. Applications
+receive the chardsp and CHOC notices through every public chardsp header, plus
+only the implementation dependencies actually included: oscillator headers
+register `elliptic-blep`, and the oversampler header registers Signalsmith
+DSP. `chardsp_OpenSourceLicenses.h` ensures CHOC's collector is included before
+other CHOC headers, and CHOC de-duplicates registrations across translation
+units. The original `LICENSE` files remain mandatory in recursive
+source/submodule distributions whether or not a component is instantiated.
 
 ## Use
 
@@ -43,6 +58,13 @@ Include headers directly:
 
 ```cpp
 #include "chardsp/chardsp_SmoothedValue.h"
+#include "chardsp/chardsp_DelayLine.h"
+#include "chardsp/chardsp_Gain.h"
+#include "chardsp/chardsp_DCBlocker.h"
+#include "chardsp/chardsp_Biquad.h"
+#include "chardsp/chardsp_Detectors.h"
+#include "chardsp/chardsp_SamplePlayer.h"
+#include "chardsp/chardsp_Oversampler.h"
 #include "chardsp/chardsp_Oscillator.h"
 #include "chardsp/chardsp_NomadOscillators.h"
 #include "chardsp/chardsp_ADSREnvelope.h"
@@ -63,7 +85,10 @@ target_link_libraries(my_executable PRIVATE chardsp)
 ```
 
 `chardsp` is an `INTERFACE` target. It builds no reusable static or dynamic
-library.
+library. In-tree CMake consumers may also use the `chardsp::chardsp` alias.
+
+Signalsmith DSP is an internal implementation dependency. Public chardsp
+signatures contain only chardsp, standard C++, or CHOC types.
 
 All sample-processing types are direct `float`/`double` templates. Select the
 precision at the use site, for example:
@@ -74,6 +99,39 @@ chardsp::StateVariableFilter<double> analysisFilter;
 ```
 
 There are no float-default or `Double` compatibility aliases.
+
+## Foundational primitives
+
+- `DelayLine<SampleType, capacity>` owns a fixed `std::array`. A zero delay
+  reads the most recently written value and `maximumDelay` reads the oldest
+  retained value. Integer and linear-interpolated reads are clamped, and
+  separate `read()`/`write()` operations support feedback topologies.
+- `gain`, `linearCrossfade`, and `equalPowerCrossfade` are stateless scalar
+  helpers. CHOC already supplies block gain/copy/add and generic sample
+  traversal, so chardsp does not duplicate those buffer utilities.
+- `SmoothedValue` provides exact finite linear and multiplicative ramps,
+  `getTarget()`, `isSmoothing()`, and closed-form `skip()`. Multiplicative
+  requests involving zero or a sign change deliberately use a linear ramp.
+- `DCBlocker` is a first-order filter with a documented pole cutoff and an
+  explicit zero-cutoff bypass.
+- `StateVariableFilter::processAll()` advances the TPT state once and returns
+  lowpass, bandpass, highpass, and notch simultaneously. `process()` retains
+  the selected-mode fast interface.
+- `BiquadCoefficients` separates normalized RBJ lowpass, highpass, bandpass,
+  notch, peak, low-shelf, and high-shelf design from the transposed-direct-form
+  `Biquad` state. Invalid or unstable coefficient requests become bypass;
+  smoothing/interpolation remains caller policy.
+- `PeakFollower`, `RMSFollower`, and `EnvelopeFollower` use explicit 1/e
+  release, mean-square, and attack/release time constants. They own no dynamic
+  storage and feed charruntime's bounded meter snapshots.
+- `SamplePlayer` reads a caller-owned `choc::span<const SampleType>`, supports
+  fractional forward rate/position with linear interpolation, and returns zero
+  after the span ends. It owns no files, decoding, streaming, or sample memory.
+- `Oversampler` wraps pinned Signalsmith FIR stages behind CHOC views. It
+  supports prepared multichannel 2x/4x upsampling, in-place high-rate access,
+  downsampling, reset, limit checks, and round-trip latency reporting. All
+  scratch allocation occurs in `prepare()`. Signalsmith types remain private
+  implementation details.
 
 ## Nomad-derived primitives
 
@@ -89,7 +147,8 @@ independently.
   fixed at `1.0`; velocity curves and output scaling belong in the consumer.
 - `StateVariableFilter<SampleType>` is the two-integrator-loop TPT topology
   with selectable `FilterMode::lowpass`, `FilterMode::bandpass`, and
-  `FilterMode::highpass` output. `setCutoffAndQ()`
+  `FilterMode::highpass` output. `processAll()` also returns lowpass, bandpass,
+  highpass, and notch from one state update. `setCutoffAndQ()`
   applies coefficients immediately, clamps cutoff to `0` through
   `0.48 * sampleRate`, and gives Q a positive floor. Resonance percentages,
   note-domain modulation, smoothing, and periodic coefficient-update policy
@@ -186,9 +245,10 @@ ctest --test-dir build --output-on-failure
 
 See [the example catalog](examples/README.md) for small, one-file programs that
 demonstrate each oscillator family, ADSR and velocity scaling, every filter and
-noise mode, explicit 4x downsampling, voice stealing, mono portamento, and a
-complete basic voice. The component examples come before the integrated voice
-so each policy remains easy to find and copy.
+noise mode, fixed feedback delay, complete oversampling, explicit specialized
+4x downsampling, voice stealing, mono portamento, and a complete basic voice.
+The component examples come before the integrated voice so each policy remains
+easy to find and copy.
 
 `bufferRender` remains the focused two-second elliptic-BLEP saw example. It
 applies explicit fade-in and fade-out smoothing, and uses CHOC's WAV writer to
@@ -196,8 +256,10 @@ create a 48 kHz, 16-bit stereo file. The output path is optional and defaults
 to `chardsp_render.wav`.
 
 The test executable uses CHOC's unit-test framework and includes Nomad parity
-vectors, float/double instantiation, filter-response checks, allocation checks,
-and sample-timed voice-stealing burst cases.
+vectors, float/double instantiation, filter/detector response checks, delay and
+playback boundaries, multi-translation-unit linkage, allocation checks,
+oversampling latency/passband/stopband/nonlinear alias measurements, and
+sample-timed voice-stealing burst cases.
 
 Disable either optional surface with `-DBUILD_TESTING=OFF` or
 `-DCHARDSP_BUILD_EXAMPLES=OFF`. Dependency paths never change: missing

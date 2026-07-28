@@ -15,9 +15,13 @@ option(CHARDSP_BUILD_EXAMPLES "Build the chardsp examples" ${CHARDSP_TOP_LEVEL})
 set(CHARDSP_CHOC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/choc")
 set(CHARDSP_ELLIPTIC_BLEP_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/external/elliptic-blep")
+set(CHARDSP_SIGNALSMITH_DSP_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/signalsmith-dsp")
 
 if (NOT EXISTS "${CHARDSP_CHOC_DIR}/choc/audio/choc_SampleBuffers.h"
-    OR NOT EXISTS "${CHARDSP_ELLIPTIC_BLEP_DIR}/elliptic-blep.h")
+    OR NOT EXISTS "${CHARDSP_ELLIPTIC_BLEP_DIR}/elliptic-blep.h"
+    OR NOT EXISTS
+       "${CHARDSP_SIGNALSMITH_DSP_DIR}/include/signalsmith-dsp/rates.h")
     message(FATAL_ERROR
         "Required chardsp submodules are missing. Run:\n"
         "  git submodule update --init --recursive")
@@ -27,8 +31,10 @@ add_library(chardsp INTERFACE)
 target_include_directories(chardsp INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CHARDSP_CHOC_DIR}"
-    "${CHARDSP_ELLIPTIC_BLEP_DIR}")
+    "${CHARDSP_ELLIPTIC_BLEP_DIR}"
+    "${CHARDSP_SIGNALSMITH_DSP_DIR}/include")
 target_compile_features(chardsp INTERFACE cxx_std_17)
+add_library(chardsp::chardsp ALIAS chardsp)
 
 if (BUILD_TESTING AND CHARDSP_BUILD_TESTS)
     add_subdirectory(tests)

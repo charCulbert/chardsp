@@ -1,5 +1,7 @@
 #pragma once
 
+#include "chardsp/chardsp_OpenSourceLicenses.h"
+
 #include <algorithm>
 #include <cmath>
 #include <type_traits>
@@ -12,6 +14,15 @@ enum class FilterMode
     lowpass,
     bandpass,
     highpass
+};
+
+template <typename SampleType>
+struct StateVariableFilterOutputs
+{
+    SampleType lowpass = SampleType {};
+    SampleType bandpass = SampleType {};
+    SampleType highpass = SampleType {};
+    SampleType notch = SampleType {};
 };
 
 // Two-integrator-loop topology-preserving-transform state-variable filter.
@@ -64,12 +75,28 @@ struct StateVariableFilter
 
     SampleType process (SampleType input) noexcept
     {
+        const auto outputs = processAll (input);
+
+        if (mode == FilterMode::highpass)
+            return outputs.highpass;
+
+        if (mode == FilterMode::bandpass)
+            return outputs.bandpass;
+
+        return outputs.lowpass;
+    }
+
+    StateVariableFilterOutputs<SampleType> processAll (
+        SampleType input) noexcept
+    {
+        input = std::isfinite (input) ? input : SampleType {};
+
         if (input == SampleType {})
         {
             snapTinyStateToZero();
 
             if (z0 == SampleType {} && z1 == SampleType {})
-                return SampleType {};
+                return {};
         }
 
         const auto high = ((input - g1 * z0) - z1) * d;
@@ -77,13 +104,7 @@ struct StateVariableFilter
         const auto low = a * band + z1;
         z0 = a * high + band;
         z1 = a * band + low;
-        if (mode == FilterMode::highpass)
-            return high;
-
-        if (mode == FilterMode::bandpass)
-            return band;
-
-        return low;
+        return { low, band, high, low + high };
     }
 
 private:

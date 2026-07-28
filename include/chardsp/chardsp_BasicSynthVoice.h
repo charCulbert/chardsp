@@ -1,5 +1,7 @@
 #pragma once
 
+#include "chardsp/chardsp_OpenSourceLicenses.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>

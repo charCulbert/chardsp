@@ -11,6 +11,8 @@ type is visible in one place.
 | `chardsp_filter` | Lowpass, bandpass, and highpass SVF modes | WAV |
 | `chardsp_noise` | Brown, pink, white, and blue noise | WAV |
 | `chardsp_downsampler` | Explicit external 4x rendering and downsampling | WAV |
+| `chardsp_delay_line` | Fixed-capacity feedback delay with separate read/write | WAV |
+| `chardsp_oversampler` | Signalsmith-backed 4x nonlinear block processing | WAV |
 | `chardsp_voice_pool` | Two voices, release-aware stealing, and pending starts | WAV + trace |
 | `chardsp_mono_portamento` | Last-note priority, legato, and portamento | WAV |
 | `chardsp_basic_synth_voice` | Complete voice integration | WAV |

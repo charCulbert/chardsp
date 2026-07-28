@@ -4,3 +4,6 @@
 [submodule "external/elliptic-blep"]
 	path = external/elliptic-blep
 	url = https://github.com/Signalsmith-Audio/elliptic-blep.git
+[submodule "external/signalsmith-dsp"]
+	path = external/signalsmith-dsp
+	url = https://github.com/Signalsmith-Audio/dsp.git

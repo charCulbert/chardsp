@@ -2,26 +2,38 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <complex>
 #include <cstddef>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <new>
+#include <string>
 #include <type_traits>
 
+#include "choc/text/choc_OpenSourceLicenseList.h"
 #include "chardsp/chardsp_ADSREnvelope.h"
 #include "chardsp/chardsp_BasicSynthVoice.h"
+#include "chardsp/chardsp_Biquad.h"
 #include "chardsp/chardsp_ColoredNoise.h"
+#include "chardsp/chardsp_DCBlocker.h"
+#include "chardsp/chardsp_DelayLine.h"
+#include "chardsp/chardsp_Detectors.h"
 #include "chardsp/chardsp_Downsampler4x.h"
+#include "chardsp/chardsp_Gain.h"
 #include "chardsp/chardsp_MonoVoiceController.h"
 #include "chardsp/chardsp_NomadOscillators.h"
 #include "chardsp/chardsp_Oscillator.h"
+#include "chardsp/chardsp_Oversampler.h"
 #include "chardsp/chardsp_Portamento.h"
+#include "chardsp/chardsp_SamplePlayer.h"
 #include "chardsp/chardsp_SmoothedValue.h"
 #include "chardsp/chardsp_StateVariableFilter.h"
 #include "chardsp/chardsp_VoicePool.h"
 #include "choc/audio/choc_Oscillators.h"
 #include "choc/platform/choc_UnitTest.h"
+
+int chardspHeaderSecondTU();
 
 namespace
 {
@@ -35,8 +47,49 @@ bool near (float actual, float expected, float tolerance = 0.000001f)
     return std::abs (actual - expected) <= tolerance;
 }
 
+size_t countOccurrences (const std::string& text,
+                         const std::string& needle)
+{
+    size_t count = 0;
+    size_t position = 0;
+
+    while ((position = text.find (needle, position)) != std::string::npos)
+    {
+        ++count;
+        position += needle.size();
+    }
+
+    return count;
+}
+
+void testThirdPartyLicenseCollection (choc::test::TestProgress& progress)
+{
+    const auto licenses =
+        choc::text::OpenSourceLicenseList::getAllLicenseText();
+    CHECK (licenses.find ("CHOC is (C)2022") != std::string::npos);
+    CHECK (licenses.find (
+        "chardsp\n\nCopyright (c) 2026 Charlie Culbert")
+        != std::string::npos);
+    CHECK (licenses.find (
+        "Copyright (c) 2021 Geraint Luff / Signalsmith Audio Ltd.")
+        != std::string::npos);
+    CHECK (licenses.find (
+        "Copyright 2024 Signalsmith Audio Ltd. / Geraint Luff")
+        != std::string::npos);
+    CHECK (countOccurrences (
+        licenses,
+        "chardsp\n\nCopyright (c) 2026 Charlie Culbert") == 1);
+    CHECK (countOccurrences (
+        licenses,
+        "Copyright (c) 2021 Geraint Luff / Signalsmith Audio Ltd.") == 1);
+    CHECK (countOccurrences (
+        licenses,
+        "Copyright 2024 Signalsmith Audio Ltd. / Geraint Luff") == 1);
+}
+
 void testSmoothedValue (choc::test::TestProgress& progress)
 {
+    CHECK (chardspHeaderSecondTU() > 0);
     chardsp::SmoothedValue<float> value;
     CHECK (near (value.getCurrent(), 0.0f));
     CHECK (near (value.next(), 0.0f));
@@ -70,6 +123,604 @@ void testSmoothedValue (choc::test::TestProgress& progress)
     CHECK (near (value.next(), 0.0f));
     CHECK (near (value.next(), -0.5f));
     CHECK (near (value.next(), -0.5f));
+
+    value.reset (1.0f);
+    value.setTarget (16.0f, 4, chardsp::SmoothingMode::multiplicative);
+    CHECK (near (value.getTarget(), 16.0f));
+    CHECK (value.isSmoothing());
+    CHECK (near (value.next(), 2.0f));
+    CHECK (near (value.skip (2), 8.0f));
+    CHECK (near (value.next(), 16.0f));
+    CHECK (! value.isSmoothing());
+
+    value.reset (-1.0f);
+    value.setTarget (-16.0f, 4,
+                     chardsp::SmoothingMode::multiplicative);
+    CHECK (near (value.skip (4), -16.0f));
+
+    value.reset (-1.0f);
+    value.setTarget (1.0f, 2,
+                     chardsp::SmoothingMode::multiplicative);
+    CHECK (near (value.next(), 0.0f));
+    CHECK (near (value.next(), 1.0f));
+
+    value.reset (0.0f);
+    value.setTarget (4.0f, 4,
+                     chardsp::SmoothingMode::multiplicative);
+    CHECK (near (value.next(), 1.0f));
+    CHECK (near (value.skip (100), 4.0f));
+    CHECK (! value.isSmoothing());
+
+    value.reset (std::numeric_limits<float>::infinity());
+    CHECK (near (value.getCurrent(), 0.0f));
+}
+
+void testDelayLineAndGain (choc::test::TestProgress& progress)
+{
+    chardsp::DelayLine<float, 4> delay;
+    static_assert (decltype (delay)::maximumDelay == 3);
+    delay.reset();
+    delay.setDelay (0.0f);
+    CHECK (near (delay.process (1.0f), 1.0f));
+    delay.setDelay (1.0f);
+    CHECK (near (delay.process (2.0f), 1.0f));
+    CHECK (near (delay.read (0), 2.0f));
+    CHECK (near (delay.read (1), 1.0f));
+
+    delay.write (3.0f);
+    delay.write (4.0f);
+    delay.write (5.0f);
+    CHECK (near (delay.read (0), 5.0f));
+    CHECK (near (delay.read (3), 2.0f));
+    CHECK (near (delay.read (100), 2.0f));
+
+    delay.reset();
+    delay.write (0.0f);
+    delay.write (10.0f);
+    CHECK (near (delay.readLinear (0.5f), 5.0f));
+    CHECK (near (delay.readLinear (
+        std::numeric_limits<float>::infinity()), 10.0f));
+    delay.setDelay (100.0f);
+    CHECK (near (delay.getDelay(), 3.0f));
+
+    chardsp::DelayLine<double, 8> doubleDelay;
+    doubleDelay.setDelay (1.5);
+    doubleDelay.write (1.0);
+    doubleDelay.write (2.0);
+    CHECK (std::isfinite (doubleDelay.read()));
+
+    CHECK (near (chardsp::gain (2.0f, 0.25f), 0.5f));
+    CHECK (near (chardsp::linearCrossfade (-1.0f, 1.0f, 0.25f),
+                 -0.5f));
+    CHECK (near (chardsp::linearCrossfade (-1.0f, 1.0f, -2.0f),
+                 -1.0f));
+    CHECK (near (chardsp::equalPowerCrossfade (1.0f, 0.0f, 0.0f),
+                 1.0f));
+    CHECK (near (chardsp::equalPowerCrossfade (0.0f, 1.0f, 1.0f),
+                 1.0f));
+    CHECK (near (chardsp::equalPowerCrossfade (1.0f, 1.0f, 0.5f),
+                 std::sqrt (2.0f), 0.000002f));
+
+    const auto allocationsBefore = allocationCount.load();
+
+    for (int i = 0; i < 100000; ++i)
+    {
+        delay.write (static_cast<float> (i));
+        (void) delay.readLinear (1.25f);
+    }
+
+    CHECK (allocationCount.load() == allocationsBefore);
+}
+
+void testDCBlockerAndDetectors (choc::test::TestProgress& progress)
+{
+    chardsp::DCBlocker<float> blocker;
+    blocker.prepare (1000.0f);
+    blocker.setCutoff (10.0f);
+    float output = 0.0f;
+
+    for (int i = 0; i < 2000; ++i)
+        output = blocker.process (1.0f);
+
+    CHECK (std::abs (output) < 0.000001f);
+
+    blocker.reset();
+    double inputEnergy = 0.0;
+    double outputEnergy = 0.0;
+
+    for (int i = 0; i < 4000; ++i)
+    {
+        const auto input = std::sin (
+            6.283185307179586f * 100.0f * static_cast<float> (i)
+            / 1000.0f);
+        const auto filtered = blocker.process (input);
+
+        if (i >= 1000)
+        {
+            inputEnergy += static_cast<double> (input) * input;
+            outputEnergy += static_cast<double> (filtered) * filtered;
+        }
+    }
+
+    CHECK (std::sqrt (outputEnergy / inputEnergy) > 0.98);
+    blocker.setCutoff (0.0f);
+    CHECK (near (blocker.process (0.25f), 0.25f));
+    blocker.setCutoff (std::numeric_limits<float>::quiet_NaN());
+    CHECK (near (blocker.getCutoff(), 20.0f));
+    CHECK (std::isfinite (blocker.process (
+        std::numeric_limits<float>::infinity())));
+
+    chardsp::PeakFollower<float> peak;
+    peak.prepare (10.0f, 1.0f);
+    CHECK (near (peak.process (-1.0f), 1.0f));
+
+    for (int i = 0; i < 10; ++i)
+        output = peak.process (0.0f);
+
+    CHECK (near (output, std::exp (-1.0f), 0.000002f));
+
+    chardsp::RMSFollower<float> rms;
+    rms.prepare (100.0f, 0.1f);
+
+    for (int i = 0; i < 100; ++i)
+        output = rms.process (-1.0f);
+
+    CHECK (near (output, 1.0f, 0.0001f));
+    rms.reset();
+    rms.prepare (48000.0f, 1.0f);
+
+    for (int i = 0; i < 480000; ++i)
+        output = rms.process (std::sin (
+            6.283185307179586f * 997.0f * static_cast<float> (i)
+            / 48000.0f));
+
+    CHECK (near (output, 0.70710678f, 0.001f));
+
+    chardsp::EnvelopeFollower<float> envelope;
+    envelope.prepare (10.0f, 1.0f, 1.0f);
+
+    for (int i = 0; i < 10; ++i)
+        output = envelope.process (1.0f);
+
+    CHECK (near (output, 1.0f - std::exp (-1.0f), 0.000002f));
+
+    for (int i = 0; i < 10; ++i)
+        output = envelope.process (0.0f);
+
+    CHECK (near (output,
+                 (1.0f - std::exp (-1.0f)) * std::exp (-1.0f),
+                 0.000002f));
+    CHECK (near (envelope.process (
+        std::numeric_limits<float>::quiet_NaN()),
+        output * std::exp (-0.1f), 0.000002f));
+
+    chardsp::DCBlocker<double> doubleBlocker;
+    chardsp::PeakFollower<double> doublePeak;
+    chardsp::RMSFollower<double> doubleRMS;
+    chardsp::EnvelopeFollower<double> doubleEnvelope;
+    doubleBlocker.prepare (48000.0);
+    doublePeak.prepare (48000.0);
+    doubleRMS.prepare (48000.0);
+    doubleEnvelope.prepare (48000.0);
+    CHECK (std::isfinite (doubleBlocker.process (1.0)));
+    CHECK (std::isfinite (doublePeak.process (1.0)));
+    CHECK (std::isfinite (doubleRMS.process (1.0)));
+    CHECK (std::isfinite (doubleEnvelope.process (1.0)));
+}
+
+template <typename SampleType>
+SampleType measureBiquadRMS (
+    chardsp::BiquadCoefficients<SampleType> coefficients,
+    SampleType sampleRate, SampleType frequency)
+{
+    chardsp::Biquad<SampleType> filter;
+    filter.setCoefficients (coefficients);
+    constexpr int discarded = 8192;
+    constexpr int measured = 16384;
+    double sumSquares = 0.0;
+
+    for (int i = 0; i < discarded + measured; ++i)
+    {
+        const auto input = std::sin (
+            static_cast<SampleType> (6.28318530717958647692)
+            * frequency * static_cast<SampleType> (i) / sampleRate);
+        const auto output = filter.process (input);
+
+        if (i >= discarded)
+            sumSquares += static_cast<double> (output) * output;
+    }
+
+    return static_cast<SampleType> (
+        std::sqrt (sumSquares / measured));
+}
+
+void testBiquad (choc::test::TestProgress& progress)
+{
+    using Coefficients = chardsp::BiquadCoefficients<float>;
+    constexpr float sampleRate = 48000.0f;
+    constexpr float cutoff = 2000.0f;
+    constexpr float q = 0.70710678f;
+
+    const auto lowpass = Coefficients::lowpass (sampleRate, cutoff, q);
+    const auto highpass = Coefficients::highpass (sampleRate, cutoff, q);
+    const auto bandpass = Coefficients::bandpass (sampleRate, cutoff, q);
+    const auto notch = Coefficients::notch (sampleRate, cutoff, q);
+    const auto peak = Coefficients::peak (
+        sampleRate, cutoff, 1.0f, 6.0f);
+    const auto lowShelf = Coefficients::lowShelf (
+        sampleRate, cutoff, 6.0f);
+    const auto highShelf = Coefficients::highShelf (
+        sampleRate, cutoff, 6.0f);
+
+    for (const auto& coefficients : {
+             lowpass, highpass, bandpass, notch,
+             peak, lowShelf, highShelf })
+        CHECK (coefficients.isStable());
+
+    CHECK (measureBiquadRMS (lowpass, sampleRate, 200.0f) > 0.69f);
+    CHECK (measureBiquadRMS (lowpass, sampleRate, 12000.0f) < 0.02f);
+    CHECK (measureBiquadRMS (highpass, sampleRate, 200.0f) < 0.02f);
+    CHECK (measureBiquadRMS (highpass, sampleRate, 12000.0f) > 0.69f);
+    CHECK (measureBiquadRMS (bandpass, sampleRate, cutoff) > 0.68f);
+    CHECK (measureBiquadRMS (bandpass, sampleRate, 12000.0f) < 0.2f);
+    CHECK (measureBiquadRMS (notch, sampleRate, cutoff) < 0.02f);
+    CHECK (measureBiquadRMS (notch, sampleRate, 12000.0f) > 0.65f);
+    CHECK (measureBiquadRMS (peak, sampleRate, cutoff) > 1.35f);
+    CHECK (measureBiquadRMS (lowShelf, sampleRate, 200.0f)
+           > measureBiquadRMS (lowShelf, sampleRate, 12000.0f) * 1.8f);
+    CHECK (measureBiquadRMS (highShelf, sampleRate, 12000.0f)
+           > measureBiquadRMS (highShelf, sampleRate, 200.0f) * 1.8f);
+
+    const auto invalid = Coefficients::lowpass (
+        0.0f, cutoff, q);
+    CHECK (invalid.isStable());
+    CHECK (near (invalid.b0, 1.0f));
+
+    chardsp::Biquad<float> filter;
+    Coefficients unstable;
+    unstable.a2 = 2.0f;
+    CHECK (! filter.setCoefficients (unstable));
+    CHECK (near (filter.process (0.25f), 0.25f));
+    CHECK (filter.setCoefficients (lowpass));
+    const auto first = filter.process (1.0f);
+    (void) filter.process (0.0f);
+    CHECK (! filter.setCoefficients (unstable));
+    CHECK (near (filter.process (0.0f), 0.0f));
+    CHECK (near (filter.process (0.0f), 0.0f));
+    CHECK (filter.setCoefficients (lowpass));
+    filter.reset();
+    CHECK (near (filter.process (1.0f), first));
+
+    const auto allocationsBefore = allocationCount.load();
+    bool finite = true;
+
+    for (int i = 0; i < 200000; ++i)
+        finite = finite && std::isfinite (filter.process (
+            std::sin (0.013f * static_cast<float> (i))));
+
+    CHECK (finite);
+    CHECK (allocationCount.load() == allocationsBefore);
+
+    using DoubleCoefficients = chardsp::BiquadCoefficients<double>;
+    chardsp::Biquad<double> doubleFilter;
+    CHECK (doubleFilter.setCoefficients (
+        DoubleCoefficients::highShelf (96000.0, 10000.0, -3.0)));
+    CHECK (std::isfinite (doubleFilter.process (1.0)));
+}
+
+void testSamplePlayer (choc::test::TestProgress& progress)
+{
+    std::array<float, 3> samples { 0.0f, 1.0f, 0.0f };
+    chardsp::SamplePlayer<float> player;
+    player.setSampleData (samples);
+    player.setRate (0.5f);
+    player.start();
+    CHECK (player.isPlaying());
+    CHECK (near (player.process(), 0.0f));
+    CHECK (near (player.process(), 0.5f));
+    CHECK (near (player.process(), 1.0f));
+    CHECK (near (player.process(), 0.5f));
+    samples[2] = 0.25f;
+    CHECK (near (player.process(), 0.25f));
+    CHECK (near (player.process(), 0.25f));
+    CHECK (! player.isPlaying());
+    CHECK (near (player.process(), 0.0f));
+
+    player.start (1.0f);
+    player.stop();
+    CHECK (near (player.process(), 0.0f));
+    player.setRate (-1.0f);
+    CHECK (near (player.getRate(), 0.0f));
+    player.setPosition (100.0f);
+    CHECK (! player.isPlaying());
+    player.reset();
+    CHECK (near (player.getPosition(), 0.0f));
+
+    std::array<double, 2> doubleSamples { -1.0, 1.0 };
+    chardsp::SamplePlayer<double> doublePlayer;
+    doublePlayer.setSampleData (doubleSamples);
+    doublePlayer.setRate (0.5);
+    doublePlayer.start (0.5);
+    CHECK (std::abs (doublePlayer.process()) < 0.000001);
+
+    const auto allocationsBefore = allocationCount.load();
+
+    for (int i = 0; i < 10000; ++i)
+    {
+        player.start();
+        (void) player.process();
+    }
+
+    CHECK (allocationCount.load() == allocationsBefore);
+}
+
+float measureOversamplingRoundTrip (
+    chardsp::OversamplingFactor factor, float frequency)
+{
+    constexpr uint32_t blockSize = 64;
+    constexpr uint32_t blockCount = 256;
+    constexpr uint32_t discardedBlocks = 64;
+    constexpr float sampleRate = 48000.0f;
+    chardsp::Oversampler<float> oversampler;
+    oversampler.prepare (1, blockSize, factor);
+    choc::buffer::ChannelArrayBuffer<float> input (1, blockSize);
+    choc::buffer::ChannelArrayBuffer<float> output (1, blockSize);
+    double inputSquares = 0.0;
+    double outputSquares = 0.0;
+
+    for (uint32_t block = 0; block < blockCount; ++block)
+    {
+        for (uint32_t frame = 0; frame < blockSize; ++frame)
+        {
+            const auto sampleIndex = block * blockSize + frame;
+            input.getSample (0, frame) = std::sin (
+                6.283185307179586f * frequency
+                * static_cast<float> (sampleIndex) / sampleRate);
+        }
+
+        (void) oversampler.upsample (input);
+        oversampler.downsample (output);
+
+        if (block >= discardedBlocks)
+            for (uint32_t frame = 0; frame < blockSize; ++frame)
+            {
+                const auto inputSample = input.getSample (0, frame);
+                const auto outputSample = output.getSample (0, frame);
+                inputSquares += static_cast<double> (inputSample)
+                              * inputSample;
+                outputSquares += static_cast<double> (outputSample)
+                               * outputSample;
+            }
+    }
+
+    return static_cast<float> (std::sqrt (outputSquares / inputSquares));
+}
+
+float measureOversamplingDownsampleGain (
+    chardsp::OversamplingFactor factor, float frequency)
+{
+    constexpr uint32_t blockSize = 64;
+    constexpr uint32_t blockCount = 256;
+    constexpr uint32_t discardedBlocks = 64;
+    constexpr float sampleRate = 48000.0f;
+    chardsp::Oversampler<float> oversampler;
+    oversampler.prepare (1, blockSize, factor);
+    choc::buffer::ChannelArrayBuffer<float> input (1, blockSize);
+    choc::buffer::ChannelArrayBuffer<float> output (1, blockSize);
+    input.clear();
+    double inputSquares = 0.0;
+    double outputSquares = 0.0;
+    const auto highRate = sampleRate * static_cast<uint32_t> (factor);
+
+    for (uint32_t block = 0; block < blockCount; ++block)
+    {
+        auto highRateBlock = oversampler.upsample (input);
+
+        for (uint32_t frame = 0;
+             frame < highRateBlock.getNumFrames(); ++frame)
+        {
+            const auto sampleIndex = block
+                    * highRateBlock.getNumFrames() + frame;
+            const auto sample = std::sin (
+                6.283185307179586f * frequency
+                * static_cast<float> (sampleIndex) / highRate);
+            highRateBlock.getSample (0, frame) = sample;
+
+            if (block >= discardedBlocks)
+                inputSquares += static_cast<double> (sample) * sample;
+        }
+
+        oversampler.downsample (output);
+
+        if (block >= discardedBlocks)
+            for (uint32_t frame = 0; frame < blockSize; ++frame)
+            {
+                const auto sample = output.getSample (0, frame);
+                outputSquares += static_cast<double> (sample) * sample;
+            }
+    }
+
+    const auto decimation = static_cast<double> (
+        static_cast<uint32_t> (factor));
+    return static_cast<float> (
+        std::sqrt (outputSquares / (inputSquares / decimation)));
+}
+
+float measureDFTMagnitude (const std::array<float, 4096>& samples,
+                           float frequency,
+                           float sampleRate)
+{
+    std::complex<double> sum;
+
+    for (size_t i = 0; i < samples.size(); ++i)
+    {
+        const auto phase = -6.28318530717958647692
+                         * static_cast<double> (frequency)
+                         * static_cast<double> (i)
+                         / static_cast<double> (sampleRate);
+        sum += static_cast<double> (samples[i])
+             * std::complex<double> (std::cos (phase), std::sin (phase));
+    }
+
+    return static_cast<float> (
+        std::abs (sum) * 2.0 / static_cast<double> (samples.size()));
+}
+
+std::array<float, 4096> renderCubic (
+    bool oversampled, size_t& allocationsDuringProcessing)
+{
+    constexpr uint32_t blockSize = 64;
+    constexpr uint32_t warmupSamples = 4096;
+    constexpr uint32_t measuredSamples = 4096;
+    constexpr uint32_t totalSamples = warmupSamples + measuredSamples;
+    constexpr float frequency = 9000.0f;
+    constexpr float sampleRate = 48000.0f;
+    std::array<float, measuredSamples> result {};
+    choc::buffer::ChannelArrayBuffer<float> input (1, blockSize);
+    choc::buffer::ChannelArrayBuffer<float> output (1, blockSize);
+    chardsp::Oversampler<float> oversampler;
+    oversampler.prepare (1, blockSize, chardsp::OversamplingFactor::x4);
+    const auto allocationsBefore = allocationCount.load();
+
+    for (uint32_t blockStart = 0; blockStart < totalSamples;
+         blockStart += blockSize)
+    {
+        for (uint32_t frame = 0; frame < blockSize; ++frame)
+        {
+            const auto sampleIndex = blockStart + frame;
+            input.getSample (0, frame) = std::sin (
+                6.283185307179586f * frequency
+                * static_cast<float> (sampleIndex) / sampleRate);
+        }
+
+        if (oversampled)
+        {
+            auto highRate = oversampler.upsample (input);
+
+            for (uint32_t frame = 0; frame < highRate.getNumFrames(); ++frame)
+            {
+                const auto sample = highRate.getSample (0, frame);
+                highRate.getSample (0, frame) = sample * sample * sample;
+            }
+
+            oversampler.downsample (output);
+        }
+        else
+        {
+            for (uint32_t frame = 0; frame < blockSize; ++frame)
+            {
+                const auto sample = input.getSample (0, frame);
+                output.getSample (0, frame) = sample * sample * sample;
+            }
+        }
+
+        if (blockStart >= warmupSamples)
+            for (uint32_t frame = 0; frame < blockSize; ++frame)
+                result[blockStart - warmupSamples + frame]
+                    = output.getSample (0, frame);
+    }
+
+    allocationsDuringProcessing = allocationCount.load() - allocationsBefore;
+    return result;
+}
+
+void testOversampler (choc::test::TestProgress& progress)
+{
+    for (const auto factor : {
+             chardsp::OversamplingFactor::x2,
+             chardsp::OversamplingFactor::x4 })
+    {
+        chardsp::Oversampler<float> oversampler;
+        CHECK (! oversampler.prepare (0, 64, factor));
+        CHECK (! oversampler.prepare (1, 0, factor));
+        CHECK (! oversampler.prepare (1, 64,
+            static_cast<chardsp::OversamplingFactor> (3)));
+        CHECK (oversampler.prepare (2, 128, factor));
+        CHECK (oversampler.getFactor() == factor);
+        CHECK (oversampler.getNumChannels() == 2);
+        CHECK (oversampler.getMaximumBlockSize() == 128);
+        CHECK (oversampler.canProcess (2, 128));
+        CHECK (! oversampler.canProcess (1, 128));
+        CHECK (! oversampler.canProcess (2, 129));
+
+        choc::buffer::ChannelArrayBuffer<float> input (2, 128);
+        choc::buffer::ChannelArrayBuffer<float> output (2, 128);
+        input.clear();
+        input.getSample (0, 0) = 1.0f;
+        const auto allocationsBefore = allocationCount.load();
+        auto highRate = oversampler.upsample (input);
+        CHECK (highRate.getNumChannels() == 2);
+        CHECK (highRate.getNumFrames()
+               == 128u * static_cast<uint32_t> (factor));
+        CHECK (oversampler.downsample (output));
+        const auto allocationsAfterProcess = allocationCount.load();
+        CHECK (allocationsAfterProcess == allocationsBefore);
+
+        uint32_t peakFrame = 0;
+        float peak = 0.0f;
+
+        for (uint32_t frame = 0; frame < output.getNumFrames(); ++frame)
+        {
+            if (std::abs (output.getSample (0, frame)) > peak)
+            {
+                peak = std::abs (output.getSample (0, frame));
+                peakFrame = frame;
+            }
+
+            CHECK (near (output.getSample (1, frame), 0.0f));
+        }
+
+        CHECK (peakFrame == oversampler.getLatency());
+        CHECK (peak > 0.5f);
+
+        oversampler.reset();
+        CHECK (allocationCount.load() == allocationsAfterProcess);
+        input.clear();
+        highRate = oversampler.upsample (input);
+        CHECK (oversampler.downsample (output));
+
+        for (uint32_t channel = 0; channel < 2; ++channel)
+            for (uint32_t frame = 0; frame < 128; ++frame)
+                CHECK (near (output.getSample (channel, frame), 0.0f));
+    }
+
+    CHECK (measureOversamplingRoundTrip (
+        chardsp::OversamplingFactor::x2, 1000.0f) > 0.99f);
+    CHECK (measureOversamplingRoundTrip (
+        chardsp::OversamplingFactor::x4, 1000.0f) > 0.99f);
+    CHECK (measureOversamplingDownsampleGain (
+        chardsp::OversamplingFactor::x2, 1000.0f) > 0.99f);
+    CHECK (measureOversamplingDownsampleGain (
+        chardsp::OversamplingFactor::x4, 1000.0f) > 0.99f);
+    CHECK (measureOversamplingDownsampleGain (
+        chardsp::OversamplingFactor::x2, 30000.0f) < 0.05f);
+    CHECK (measureOversamplingDownsampleGain (
+        chardsp::OversamplingFactor::x4, 30000.0f) < 0.05f);
+
+    size_t directAllocations = 0;
+    size_t oversampledAllocations = 0;
+    const auto direct = renderCubic (false, directAllocations);
+    const auto oversampled = renderCubic (true, oversampledAllocations);
+    const auto directAlias = measureDFTMagnitude (
+        direct, 21000.0f, 48000.0f);
+    const auto oversampledAlias = measureDFTMagnitude (
+        oversampled, 21000.0f, 48000.0f);
+    CHECK (directAlias > 0.2f);
+    CHECK (oversampledAlias < directAlias * 0.25f);
+    CHECK (directAllocations == 0);
+    CHECK (oversampledAllocations == 0);
+
+    chardsp::Oversampler<double> doubleOversampler;
+    CHECK (doubleOversampler.prepare (
+        1, 16, chardsp::OversamplingFactor::x2));
+    choc::buffer::ChannelArrayBuffer<double> doubleInput (1, 16);
+    choc::buffer::ChannelArrayBuffer<double> doubleOutput (1, 16);
+    doubleInput.clear();
+    doubleInput.getSample (0, 0) = 1.0;
+    auto doubleHighRate = doubleOversampler.upsample (doubleInput);
+    CHECK (doubleHighRate.getNumFrames() == 32);
+    CHECK (doubleOversampler.downsample (doubleOutput));
+    CHECK (std::isfinite (doubleOutput.getSample (0, 0)));
 }
 
 void testEllipticSaw (choc::test::TestProgress& progress)
@@ -776,6 +1427,20 @@ void testStateVariableFilterBehavior (choc::test::TestProgress& progress)
     CHECK (reachedExactZero);
     CHECK (decaying.process (0.0f) == 0.0f);
 
+    chardsp::StateVariableFilter<float> nonFiniteInput;
+    nonFiniteInput.prepare (48000.0f);
+    nonFiniteInput.setCutoffAndQ (1000.0f, 0.70710678f);
+    nonFiniteInput.process (1.0f);
+    const auto nanOutput = nonFiniteInput.process (
+        std::numeric_limits<float>::quiet_NaN());
+    const auto infinityOutput = nonFiniteInput.process (
+        std::numeric_limits<float>::infinity());
+    CHECK (std::isfinite (nanOutput));
+    CHECK (std::isfinite (infinityOutput));
+
+    for (int i = 0; i < 1024; ++i)
+        CHECK (std::isfinite (nonFiniteInput.process (0.0f)));
+
     const auto allocationsBeforeRender = allocationCount.load();
     bool allFinite = true;
 
@@ -787,6 +1452,33 @@ void testStateVariableFilterBehavior (choc::test::TestProgress& progress)
 
     CHECK (allFinite);
     CHECK (allocationCount.load() == allocationsBeforeRender);
+
+    chardsp::StateVariableFilter<float> allOutputs;
+    chardsp::StateVariableFilter<float> selectedLow;
+    chardsp::StateVariableFilter<float> selectedBand;
+    chardsp::StateVariableFilter<float> selectedHigh;
+
+    for (auto* filter : {
+             &allOutputs, &selectedLow, &selectedBand, &selectedHigh })
+    {
+        filter->prepare (48000.0f);
+        filter->setCutoffAndQ (3000.0f, 0.8f);
+    }
+
+    selectedLow.setMode (chardsp::FilterMode::lowpass);
+    selectedBand.setMode (chardsp::FilterMode::bandpass);
+    selectedHigh.setMode (chardsp::FilterMode::highpass);
+
+    for (int i = 0; i < 1024; ++i)
+    {
+        const auto input = std::sin (0.027f * static_cast<float> (i));
+        const auto outputs = allOutputs.processAll (input);
+        CHECK (near (outputs.lowpass, selectedLow.process (input)));
+        CHECK (near (outputs.bandpass, selectedBand.process (input)));
+        CHECK (near (outputs.highpass, selectedHigh.process (input)));
+        CHECK (near (outputs.notch,
+                     outputs.lowpass + outputs.highpass));
+    }
 }
 
 void testColoredNoiseParity (choc::test::TestProgress& progress)
@@ -1647,7 +2339,13 @@ int main()
     choc::test::TestProgress progress;
     CHOC_CATEGORY (chardsp);
 
+    { CHOC_TEST (third_party_license_collection); testThirdPartyLicenseCollection (progress); }
     { CHOC_TEST (smoothed_value); testSmoothedValue (progress); }
+    { CHOC_TEST (delay_line_and_gain); testDelayLineAndGain (progress); }
+    { CHOC_TEST (dc_blocker_and_detectors); testDCBlockerAndDetectors (progress); }
+    { CHOC_TEST (biquad); testBiquad (progress); }
+    { CHOC_TEST (sample_player); testSamplePlayer (progress); }
+    { CHOC_TEST (signalsmith_oversampler); testOversampler (progress); }
     { CHOC_TEST (elliptic_saw); testEllipticSaw (progress); }
     { CHOC_TEST (generic_oscillators); testGenericOscillators (progress); }
     { CHOC_TEST (nomad_oscillator); testNomadOscillator (progress); }
