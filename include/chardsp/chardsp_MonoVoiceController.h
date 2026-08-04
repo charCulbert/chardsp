@@ -138,8 +138,30 @@ struct MonoVoiceController
 
     Action stop (const Key& key) noexcept
     {
-        if (const auto slot = findHeldSlot (key); slot >= 0)
-            held[static_cast<size_t> (slot)].active = false;
+        return stopMatching (
+            [&key] (const Key& candidate) noexcept
+            {
+                return candidate == key;
+            });
+    }
+
+    template <typename Predicate>
+    Action stopMatching (Predicate&& matches) noexcept
+    {
+        static_assert (noexcept (matches (std::declval<const Key&>())),
+                       "MonoVoiceController stop predicate must be noexcept");
+
+        auto removedActiveKey = false;
+        for (auto& note : held)
+            if (note.active && matches (note.key))
+            {
+                removedActiveKey = removedActiveKey
+                                || note.key == activeKey;
+                note.active = false;
+            }
+
+        if (! removedActiveKey)
+            return {};
 
         if (const auto fallback = findNewestSlot(); fallback >= 0)
         {

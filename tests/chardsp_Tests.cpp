@@ -20,10 +20,13 @@
 #include "chardsp/chardsp_DelayLine.h"
 #include "chardsp/chardsp_Detectors.h"
 #include "chardsp/chardsp_Downsampler4x.h"
+#include "chardsp/chardsp_EllipticBLEP.h"
 #include "chardsp/chardsp_Gain.h"
 #include "chardsp/chardsp_MonoVoiceController.h"
 #include "chardsp/chardsp_NomadOscillators.h"
 #include "chardsp/chardsp_Oscillator.h"
+#include "chardsp/chardsp_OscillatorEvents.h"
+#include "chardsp/chardsp_OscillatorPhase.h"
 #include "chardsp/chardsp_Oversampler.h"
 #include "chardsp/chardsp_Portamento.h"
 #include "chardsp/chardsp_SamplePlayer.h"
@@ -793,6 +796,106 @@ void testEllipticSaw (choc::test::TestProgress& progress)
         for (size_t i = blockStart;
              i < std::min (blockStart + 127, expected.size()); ++i)
             CHECK (near (splitRender.next(), expected[i]));
+}
+
+void testOscillatorPhaseAndEllipticCorrection (
+    choc::test::TestProgress& progress)
+{
+    chardsp::OscillatorPhase<float> phase;
+    phase.prepare (8.0f);
+    phase.setFrequency (2.0f);
+    phase.reset (0.9f);
+
+    const auto advance = phase.advanceWithStatus();
+    CHECK (advance.wrapped);
+    CHECK (near (advance.startPhase, 0.9f));
+    CHECK (near (advance.phase, 0.15f));
+    CHECK (near (advance.wrapOffset, 0.4f));
+
+    chardsp::EllipticBLEPCorrection<float> unprepared;
+    CHECK (near (unprepared.process (0.25f), 0.25f));
+
+    chardsp::EllipticBLEPCorrection<float> correction;
+    correction.prepare (48000.0f);
+    correction.beginSample();
+    correction.addStep (0.25f, 2.0f);
+    correction.addSlopeJump (0.75f, -0.1f);
+
+    const auto allocationsBeforeRender = allocationCount.load();
+    float peak = 0.0f;
+
+    for (int i = 0; i < 512; ++i)
+    {
+        const auto sample = correction.process (0.0f);
+        CHECK (std::isfinite (sample));
+        peak = std::max (peak, std::abs (sample));
+        correction.beginSample();
+    }
+
+    CHECK (peak > 0.01f);
+    CHECK (allocationCount.load() == allocationsBeforeRender);
+
+    correction.reset();
+    correction.beginSample();
+    CHECK (std::isfinite (correction.process (0.0f)));
+
+    std::array<chardsp::PulseEdgeEvent<float>, 3> events {};
+    size_t eventCount = 0;
+    const auto capture = [&] (chardsp::PulseEdgeEvent<float> event)
+    {
+        events[eventCount++] = event;
+    };
+
+    chardsp::forEachMovingPulseEdge (
+        0.4f, 0.6f, 0.5f, 0.5f, 0.0f, 1.0f, capture);
+    CHECK (eventCount == 1);
+    CHECK (near (events[0].offset, 0.5f));
+    CHECK (near (events[0].step, -2.0f));
+
+    eventCount = 0;
+    chardsp::forEachMovingPulseEdge (
+        0.5f, 0.51f, 0.4f, 0.6f, 0.0f, 1.0f, capture);
+    CHECK (eventCount == 1);
+    CHECK (near (events[0].offset, 0.5263158f));
+    CHECK (near (events[0].step, 2.0f));
+
+    eventCount = 0;
+    chardsp::forEachMovingPulseEdge (
+        0.9f, 1.1f, 0.5f, 0.5f, 0.0f, 1.0f, capture);
+    CHECK (eventCount == 1);
+    CHECK (near (events[0].offset, 0.5f));
+    CHECK (near (events[0].step, 2.0f));
+
+    eventCount = 0;
+    chardsp::forEachMovingPulseEdge (
+        0.4f, 1.1f, 0.5f, 0.5f, 0.0f, 1.0f, capture);
+    CHECK (eventCount == 2);
+    CHECK (near (events[0].offset, 1.0f / 7.0f));
+    CHECK (near (events[0].step, -2.0f));
+    CHECK (near (events[1].offset, 6.0f / 7.0f));
+    CHECK (near (events[1].step, 2.0f));
+
+    CHECK (allocationCount.load() == allocationsBeforeRender);
+
+    chardsp::EllipticPulseOscillator<float> movingPulse;
+    movingPulse.setPulseWidth (0.4f);
+    movingPulse.prepare (48000.0f);
+    movingPulse.setFrequency (480.0f);
+    movingPulse.reset (0.5f);
+    movingPulse.setPulseWidth (0.6f);
+
+    chardsp::EllipticBLEPCorrection<float> movingReference;
+    movingReference.prepare (48000.0f);
+    movingReference.beginSample();
+    movingReference.addStep (0.5263158f, 2.0f);
+    const auto allocationsBeforeMovingRender = allocationCount.load();
+
+    CHECK (near (
+        movingPulse.next(),
+        movingReference.process (1.0f),
+        0.000002f));
+
+    CHECK (allocationCount.load() == allocationsBeforeMovingRender);
 }
 
 void testGenericOscillators (choc::test::TestProgress& progress)
@@ -2242,8 +2345,25 @@ void testMonoVoiceController (choc::test::TestProgress& progress)
     CHECK (action.hasPitch() && near (action.pitch, 60.0f));
     CHECK (! action.trigger && action.glide);
 
+    mono.start (2, 64.0f, 0.7f);
+    mono.start (3, 67.0f, 0.6f);
+    action = mono.stopMatching (
+        [] (int key) noexcept { return key >= 2; });
+    CHECK (action.hasPitch() && near (action.pitch, 60.0f));
+    CHECK (mono.getHeldCount() == 1);
+
+    // Stale note-offs and releases below the active note do not change pitch.
+    mono.start (2, 64.0f, 0.7f);
+    action = mono.stopMatching (
+        [] (int key) noexcept { return key == 99; });
+    CHECK (! action.hasPitch() && ! action.shouldRelease());
+    action = mono.stopMatching (
+        [] (int key) noexcept { return key == 1; });
+    CHECK (! action.hasPitch() && ! action.shouldRelease());
+    CHECK (mono.getHeldCount() == 1);
+
     // Legato delays the final gate-off by Nomad Cmajor's 24 ms grace window.
-    CHECK (! mono.stop (1).shouldRelease());
+    CHECK (! mono.stop (2).shouldRelease());
     CHECK (mono.hasPendingGateOff());
 
     for (int i = 0; i < 23; ++i)
@@ -2347,6 +2467,8 @@ int main()
     { CHOC_TEST (sample_player); testSamplePlayer (progress); }
     { CHOC_TEST (signalsmith_oversampler); testOversampler (progress); }
     { CHOC_TEST (elliptic_saw); testEllipticSaw (progress); }
+    { CHOC_TEST (oscillator_phase_and_elliptic_correction);
+      testOscillatorPhaseAndEllipticCorrection (progress); }
     { CHOC_TEST (generic_oscillators); testGenericOscillators (progress); }
     { CHOC_TEST (nomad_oscillator); testNomadOscillator (progress); }
     { CHOC_TEST (basic_synth_voice); testBasicSynthVoice (progress); }

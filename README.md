@@ -237,9 +237,9 @@ and per-sample methods are `noexcept`.
 ## Build and test
 
 ```sh
-cmake -S . -B build -DBUILD_TESTING=ON -DCHARDSP_BUILD_EXAMPLES=ON
+cmake -S . -B build -DCHARDSP_BUILD_TESTS=ON -DCHARDSP_BUILD_EXAMPLES=ON
 cmake --build build
-ctest --test-dir build --output-on-failure
+./build/tests/chardsp_tests
 ./build/examples/bufferRender/chardsp_buffer_render chardsp_render.wav
 ```
 
@@ -261,6 +261,6 @@ playback boundaries, multi-translation-unit linkage, allocation checks,
 oversampling latency/passband/stopband/nonlinear alias measurements, and
 sample-timed voice-stealing burst cases.
 
-Disable either optional surface with `-DBUILD_TESTING=OFF` or
+Disable either optional surface with `-DCHARDSP_BUILD_TESTS=OFF` or
 `-DCHARDSP_BUILD_EXAMPLES=OFF`. Dependency paths never change: missing
 submodules make configuration fail with the recursive update command.

@@ -2,8 +2,6 @@ cmake_minimum_required(VERSION 3.15)
 
 project(chardsp LANGUAGES CXX)
 
-include(CTest)
-
 set(CHARDSP_TOP_LEVEL OFF)
 if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     set(CHARDSP_TOP_LEVEL ON)
@@ -12,11 +10,15 @@ endif()
 option(CHARDSP_BUILD_TESTS "Build the chardsp tests" ${CHARDSP_TOP_LEVEL})
 option(CHARDSP_BUILD_EXAMPLES "Build the chardsp examples" ${CHARDSP_TOP_LEVEL})
 
-set(CHARDSP_CHOC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/choc")
+set(CHARDSP_CHOC_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/choc"
+    CACHE PATH "Path to CHOC")
 set(CHARDSP_ELLIPTIC_BLEP_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/external/elliptic-blep")
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/elliptic-blep"
+    CACHE PATH "Path to elliptic-blep")
 set(CHARDSP_SIGNALSMITH_DSP_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/external/signalsmith-dsp")
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/signalsmith-dsp"
+    CACHE PATH "Path to Signalsmith DSP")
 
 if (NOT EXISTS "${CHARDSP_CHOC_DIR}/choc/audio/choc_SampleBuffers.h"
     OR NOT EXISTS "${CHARDSP_ELLIPTIC_BLEP_DIR}/elliptic-blep.h"
@@ -36,7 +38,7 @@ target_include_directories(chardsp INTERFACE
 target_compile_features(chardsp INTERFACE cxx_std_17)
 add_library(chardsp::chardsp ALIAS chardsp)
 
-if (BUILD_TESTING AND CHARDSP_BUILD_TESTS)
+if (CHARDSP_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 

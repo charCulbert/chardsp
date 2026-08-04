@@ -23,6 +23,15 @@ struct ADSREnvelope
                    || std::is_same_v<SampleType, double>,
                    "ADSREnvelope supports float or double");
 
+    enum class Stage
+    {
+        attack,
+        decay,
+        release,
+        idle,
+        forcedRelease
+    };
+
     void prepare (SampleType newSampleRate) noexcept
     {
         sampleRate = std::isfinite (newSampleRate) && newSampleRate > 0.0f
@@ -40,6 +49,7 @@ struct ADSREnvelope
         stageTarget = 0.0f;
         level = 0.0f;
         stageDifference = 0.0f;
+        stageStart = 0.0f;
         stageThreshold = minimumDistance;
         stageLinearStep = 0.0f;
         forcedReleaseStep = 0.0f;
@@ -116,6 +126,7 @@ struct ADSREnvelope
     // Forced release is always linear, independent of the envelope shape.
     void forceRelease (SampleType seconds) noexcept
     {
+        stageStart = current;
         level = 0.0f;
         stageTarget = 0.0f;
         stageDifference = current;
@@ -184,17 +195,43 @@ struct ADSREnvelope
 
     SampleType getCurrent() const noexcept { return current; }
     bool isActive() const noexcept { return stage != Stage::idle; }
+    Stage getStage() const noexcept { return stage; }
+
+    SampleType getStageProgress() const noexcept
+    {
+        switch (stage)
+        {
+            case Stage::attack:
+                return std::clamp (current, SampleType {},
+                                   static_cast<SampleType> (1.0));
+            case Stage::decay:
+            {
+                const auto distance = static_cast<SampleType> (1.0)
+                                    - sustainLevel;
+                return distance > minimumDistance
+                    ? std::clamp ((static_cast<SampleType> (1.0) - current)
+                                      / distance,
+                                  SampleType {},
+                                  static_cast<SampleType> (1.0))
+                    : static_cast<SampleType> (1.0);
+            }
+            case Stage::release:
+            case Stage::forcedRelease:
+                return std::abs (stageStart) > minimumDistance
+                    ? std::clamp (
+                        static_cast<SampleType> (1.0)
+                            - std::abs (current / stageStart),
+                        SampleType {},
+                        static_cast<SampleType> (1.0))
+                    : static_cast<SampleType> (1.0);
+            case Stage::idle:
+                return SampleType {};
+        }
+
+        return SampleType {};
+    }
 
 private:
-    enum class Stage
-    {
-        attack,
-        decay,
-        release,
-        idle,
-        forcedRelease
-    };
-
     static constexpr SampleType envelopeCompletionRatio = static_cast<SampleType> (0.047);
     static constexpr SampleType attackCompletionRatio = static_cast<SampleType> (0.040);
     static constexpr SampleType releaseCompletionRatio = static_cast<SampleType> (0.049);
@@ -247,6 +284,7 @@ private:
     {
         stage = nextStage;
         stageTarget = target;
+        stageStart = current;
 
         if (seconds <= 0.0f || std::abs (current - target) <= minimumDistance)
         {
@@ -353,6 +391,7 @@ private:
     SampleType level {};
     SampleType stageTarget {};
     SampleType stageDifference {};
+    SampleType stageStart {};
     SampleType stageThreshold = minimumDistance;
     SampleType factor {};
     SampleType attackFactor {};
