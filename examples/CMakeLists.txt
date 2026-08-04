@@ -8,7 +8,7 @@ if (APPLE)
         "-framework CoreMIDI"
         "-framework CoreFoundation")
     target_compile_definitions(chardsp_example_host PRIVATE
-        CHARDSP_DEMO_ASSET_DIR="${CMAKE_CURRENT_LIST_DIR}")
+        CHARDSP_DEMO_ASSET_DIR="${CMAKE_CURRENT_LIST_DIR}/common")
 
     function(add_chardsp_example target source)
         add_executable(${target} ${source})

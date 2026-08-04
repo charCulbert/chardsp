@@ -5,8 +5,8 @@ import {
   isNoteOnMessage,
   noteFromMessage,
   noteName,
-} from '../midi.js';
-import { defineElement, numberAttr } from '../utils.js';
+} from './midi.js';
+import { defineElement, numberAttr } from './utils.js';
 
 const DEFAULT_KEY_MAP =
   'KeyA KeyW KeyS KeyE KeyD KeyF KeyT KeyG KeyY KeyH KeyU KeyJ KeyK KeyO KeyL KeyP Semicolon';
