@@ -1,2 +1,0 @@
-add_executable(chardsp_downsampler downsampler_Main.cpp)
-target_link_libraries(chardsp_downsampler PRIVATE chardsp)

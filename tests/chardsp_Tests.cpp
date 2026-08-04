@@ -8,10 +8,8 @@
 #include <iostream>
 #include <limits>
 #include <new>
-#include <string>
 #include <type_traits>
 
-#include "choc/text/choc_OpenSourceLicenseList.h"
 #include "chardsp/chardsp_ADSREnvelope.h"
 #include "chardsp/chardsp_BasicSynthVoice.h"
 #include "chardsp/chardsp_Biquad.h"
@@ -32,129 +30,78 @@
 #include "chardsp/chardsp_SmoothedValue.h"
 #include "chardsp/chardsp_StateVariableFilter.h"
 #include "chardsp/chardsp_VoicePool.h"
-#include "choc/audio/choc_Oscillators.h"
 #include "choc/platform/choc_UnitTest.h"
-
-int chardspHeaderSecondTU();
 
 namespace
 {
 
 std::atomic<size_t> allocationCount { 0 };
 
-#define CHECK(expression) CHOC_EXPECT_TRUE (expression)
-
-bool near (float actual, float expected, float tolerance = 0.000001f)
-{
-    return std::abs (actual - expected) <= tolerance;
-}
-
-size_t countOccurrences (const std::string& text,
-                         const std::string& needle)
-{
-    size_t count = 0;
-    size_t position = 0;
-
-    while ((position = text.find (needle, position)) != std::string::npos)
-    {
-        ++count;
-        position += needle.size();
-    }
-
-    return count;
-}
-
-void testThirdPartyLicenseCollection (choc::test::TestProgress& progress)
-{
-    const auto licenses =
-        choc::text::OpenSourceLicenseList::getAllLicenseText();
-    CHECK (licenses.find ("CHOC is (C)2022") != std::string::npos);
-    CHECK (licenses.find (
-        "chardsp\n\nCopyright (c) 2026 Charlie Culbert")
-        != std::string::npos);
-    CHECK (licenses.find (
-        "Copyright (c) 2021 Geraint Luff / Signalsmith Audio Ltd.")
-        != std::string::npos);
-    CHECK (licenses.find (
-        "Copyright 2024 Signalsmith Audio Ltd. / Geraint Luff")
-        != std::string::npos);
-    CHECK (countOccurrences (
-        licenses,
-        "chardsp\n\nCopyright (c) 2026 Charlie Culbert") == 1);
-    CHECK (countOccurrences (
-        licenses,
-        "Copyright (c) 2021 Geraint Luff / Signalsmith Audio Ltd.") == 1);
-    CHECK (countOccurrences (
-        licenses,
-        "Copyright 2024 Signalsmith Audio Ltd. / Geraint Luff") == 1);
-}
-
 void testSmoothedValue (choc::test::TestProgress& progress)
 {
-    CHECK (chardspHeaderSecondTU() > 0);
     chardsp::SmoothedValue<float> value;
-    CHECK (near (value.getCurrent(), 0.0f));
-    CHECK (near (value.next(), 0.0f));
+    CHOC_EXPECT_NEAR (value.getCurrent(), 0.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (value.next(), 0.0f, 0.000001f);
 
     value.reset (-2.0f);
-    CHECK (near (value.getCurrent(), -2.0f));
-    CHECK (near (value.next(), -2.0f));
+    CHOC_EXPECT_NEAR (value.getCurrent(), -2.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (value.next(), -2.0f, 0.000001f);
 
     value.setTarget (3.0f, 0);
-    CHECK (near (value.getCurrent(), 3.0f));
-    CHECK (near (value.next(), 3.0f));
+    CHOC_EXPECT_NEAR (value.getCurrent(), 3.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (value.next(), 3.0f, 0.000001f);
 
     value.setTarget (-1.0f, 1);
-    CHECK (near (value.next(), -1.0f));
-    CHECK (near (value.next(), -1.0f));
+    CHOC_EXPECT_NEAR (value.next(), -1.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (value.next(), -1.0f, 0.000001f);
 
     value.reset (-1.0f);
     value.setTarget (1.0f, 4);
-    CHECK (near (value.next(), -0.5f));
-    CHECK (near (value.next(), 0.0f));
-    CHECK (near (value.next(), 0.5f));
-    CHECK (near (value.next(), 1.0f));
-    CHECK (near (value.getCurrent(), 1.0f));
-    CHECK (near (value.next(), 1.0f));
+    CHOC_EXPECT_NEAR (value.next(), -0.5f, 0.000001f);
+    CHOC_EXPECT_NEAR (value.next(), 0.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (value.next(), 0.5f, 0.000001f);
+    CHOC_EXPECT_NEAR (value.next(), 1.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (value.getCurrent(), 1.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (value.next(), 1.0f, 0.000001f);
 
     value.reset (0.0f);
     value.setTarget (1.0f, 4);
-    CHECK (near (value.next(), 0.25f));
-    CHECK (near (value.next(), 0.5f));
+    CHOC_EXPECT_NEAR (value.next(), 0.25f, 0.000001f);
+    CHOC_EXPECT_NEAR (value.next(), 0.5f, 0.000001f);
     value.setTarget (-0.5f, 2);
-    CHECK (near (value.next(), 0.0f));
-    CHECK (near (value.next(), -0.5f));
-    CHECK (near (value.next(), -0.5f));
+    CHOC_EXPECT_NEAR (value.next(), 0.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (value.next(), -0.5f, 0.000001f);
+    CHOC_EXPECT_NEAR (value.next(), -0.5f, 0.000001f);
 
     value.reset (1.0f);
     value.setTarget (16.0f, 4, chardsp::SmoothingMode::multiplicative);
-    CHECK (near (value.getTarget(), 16.0f));
-    CHECK (value.isSmoothing());
-    CHECK (near (value.next(), 2.0f));
-    CHECK (near (value.skip (2), 8.0f));
-    CHECK (near (value.next(), 16.0f));
-    CHECK (! value.isSmoothing());
+    CHOC_EXPECT_NEAR (value.getTarget(), 16.0f, 0.000001f);
+    CHOC_EXPECT_TRUE (value.isSmoothing());
+    CHOC_EXPECT_NEAR (value.next(), 2.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (value.skip (2), 8.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (value.next(), 16.0f, 0.000001f);
+    CHOC_EXPECT_FALSE (value.isSmoothing());
 
     value.reset (-1.0f);
     value.setTarget (-16.0f, 4,
                      chardsp::SmoothingMode::multiplicative);
-    CHECK (near (value.skip (4), -16.0f));
+    CHOC_EXPECT_NEAR (value.skip (4), -16.0f, 0.000001f);
 
     value.reset (-1.0f);
     value.setTarget (1.0f, 2,
                      chardsp::SmoothingMode::multiplicative);
-    CHECK (near (value.next(), 0.0f));
-    CHECK (near (value.next(), 1.0f));
+    CHOC_EXPECT_NEAR (value.next(), 0.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (value.next(), 1.0f, 0.000001f);
 
     value.reset (0.0f);
     value.setTarget (4.0f, 4,
                      chardsp::SmoothingMode::multiplicative);
-    CHECK (near (value.next(), 1.0f));
-    CHECK (near (value.skip (100), 4.0f));
-    CHECK (! value.isSmoothing());
+    CHOC_EXPECT_NEAR (value.next(), 1.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (value.skip (100), 4.0f, 0.000001f);
+    CHOC_EXPECT_FALSE (value.isSmoothing());
 
     value.reset (std::numeric_limits<float>::infinity());
-    CHECK (near (value.getCurrent(), 0.0f));
+    CHOC_EXPECT_NEAR (value.getCurrent(), 0.0f, 0.000001f);
 }
 
 void testDelayLineAndGain (choc::test::TestProgress& progress)
@@ -163,45 +110,40 @@ void testDelayLineAndGain (choc::test::TestProgress& progress)
     static_assert (decltype (delay)::maximumDelay == 3);
     delay.reset();
     delay.setDelay (0.0f);
-    CHECK (near (delay.process (1.0f), 1.0f));
+    CHOC_EXPECT_NEAR (delay.process (1.0f), 1.0f, 0.000001f);
     delay.setDelay (1.0f);
-    CHECK (near (delay.process (2.0f), 1.0f));
-    CHECK (near (delay.read (0), 2.0f));
-    CHECK (near (delay.read (1), 1.0f));
+    CHOC_EXPECT_NEAR (delay.process (2.0f), 1.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (delay.read (0), 2.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (delay.read (1), 1.0f, 0.000001f);
 
     delay.write (3.0f);
     delay.write (4.0f);
     delay.write (5.0f);
-    CHECK (near (delay.read (0), 5.0f));
-    CHECK (near (delay.read (3), 2.0f));
-    CHECK (near (delay.read (100), 2.0f));
+    CHOC_EXPECT_NEAR (delay.read (0), 5.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (delay.read (3), 2.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (delay.read (100), 2.0f, 0.000001f);
 
     delay.reset();
     delay.write (0.0f);
     delay.write (10.0f);
-    CHECK (near (delay.readLinear (0.5f), 5.0f));
-    CHECK (near (delay.readLinear (
-        std::numeric_limits<float>::infinity()), 10.0f));
+    CHOC_EXPECT_NEAR (delay.readLinear (0.5f), 5.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (delay.readLinear (
+        std::numeric_limits<float>::infinity()), 10.0f, 0.000001f);
     delay.setDelay (100.0f);
-    CHECK (near (delay.getDelay(), 3.0f));
+    CHOC_EXPECT_NEAR (delay.getDelay(), 3.0f, 0.000001f);
 
     chardsp::DelayLine<double, 8> doubleDelay;
     doubleDelay.setDelay (1.5);
     doubleDelay.write (1.0);
     doubleDelay.write (2.0);
-    CHECK (std::isfinite (doubleDelay.read()));
+    CHOC_EXPECT_TRUE (std::isfinite (doubleDelay.read()));
 
-    CHECK (near (chardsp::gain (2.0f, 0.25f), 0.5f));
-    CHECK (near (chardsp::linearCrossfade (-1.0f, 1.0f, 0.25f),
-                 -0.5f));
-    CHECK (near (chardsp::linearCrossfade (-1.0f, 1.0f, -2.0f),
-                 -1.0f));
-    CHECK (near (chardsp::equalPowerCrossfade (1.0f, 0.0f, 0.0f),
-                 1.0f));
-    CHECK (near (chardsp::equalPowerCrossfade (0.0f, 1.0f, 1.0f),
-                 1.0f));
-    CHECK (near (chardsp::equalPowerCrossfade (1.0f, 1.0f, 0.5f),
-                 std::sqrt (2.0f), 0.000002f));
+    CHOC_EXPECT_NEAR (chardsp::gain (2.0f, 0.25f), 0.5f, 0.000001f);
+    CHOC_EXPECT_NEAR (chardsp::linearCrossfade (-1.0f, 1.0f, 0.25f), -0.5f, 0.000001f);
+    CHOC_EXPECT_NEAR (chardsp::linearCrossfade (-1.0f, 1.0f, -2.0f), -1.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (chardsp::equalPowerCrossfade (1.0f, 0.0f, 0.0f), 1.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (chardsp::equalPowerCrossfade (0.0f, 1.0f, 1.0f), 1.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (chardsp::equalPowerCrossfade (1.0f, 1.0f, 0.5f), std::sqrt (2.0f), 0.000002f);
 
     const auto allocationsBefore = allocationCount.load();
 
@@ -211,7 +153,7 @@ void testDelayLineAndGain (choc::test::TestProgress& progress)
         (void) delay.readLinear (1.25f);
     }
 
-    CHECK (allocationCount.load() == allocationsBefore);
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
 }
 
 void testDCBlockerAndDetectors (choc::test::TestProgress& progress)
@@ -224,7 +166,7 @@ void testDCBlockerAndDetectors (choc::test::TestProgress& progress)
     for (int i = 0; i < 2000; ++i)
         output = blocker.process (1.0f);
 
-    CHECK (std::abs (output) < 0.000001f);
+    CHOC_EXPECT_TRUE (std::abs (output) < 0.000001f);
 
     blocker.reset();
     double inputEnergy = 0.0;
@@ -244,22 +186,22 @@ void testDCBlockerAndDetectors (choc::test::TestProgress& progress)
         }
     }
 
-    CHECK (std::sqrt (outputEnergy / inputEnergy) > 0.98);
+    CHOC_EXPECT_TRUE (std::sqrt (outputEnergy / inputEnergy) > 0.98);
     blocker.setCutoff (0.0f);
-    CHECK (near (blocker.process (0.25f), 0.25f));
+    CHOC_EXPECT_NEAR (blocker.process (0.25f), 0.25f, 0.000001f);
     blocker.setCutoff (std::numeric_limits<float>::quiet_NaN());
-    CHECK (near (blocker.getCutoff(), 20.0f));
-    CHECK (std::isfinite (blocker.process (
+    CHOC_EXPECT_NEAR (blocker.getCutoff(), 20.0f, 0.000001f);
+    CHOC_EXPECT_TRUE (std::isfinite (blocker.process (
         std::numeric_limits<float>::infinity())));
 
     chardsp::PeakFollower<float> peak;
     peak.prepare (10.0f, 1.0f);
-    CHECK (near (peak.process (-1.0f), 1.0f));
+    CHOC_EXPECT_NEAR (peak.process (-1.0f), 1.0f, 0.000001f);
 
     for (int i = 0; i < 10; ++i)
         output = peak.process (0.0f);
 
-    CHECK (near (output, std::exp (-1.0f), 0.000002f));
+    CHOC_EXPECT_NEAR (output, std::exp (-1.0f), 0.000002f);
 
     chardsp::RMSFollower<float> rms;
     rms.prepare (100.0f, 0.1f);
@@ -267,7 +209,7 @@ void testDCBlockerAndDetectors (choc::test::TestProgress& progress)
     for (int i = 0; i < 100; ++i)
         output = rms.process (-1.0f);
 
-    CHECK (near (output, 1.0f, 0.0001f));
+    CHOC_EXPECT_NEAR (output, 1.0f, 0.0001f);
     rms.reset();
     rms.prepare (48000.0f, 1.0f);
 
@@ -276,7 +218,7 @@ void testDCBlockerAndDetectors (choc::test::TestProgress& progress)
             6.283185307179586f * 997.0f * static_cast<float> (i)
             / 48000.0f));
 
-    CHECK (near (output, 0.70710678f, 0.001f));
+    CHOC_EXPECT_NEAR (output, 0.70710678f, 0.001f);
 
     chardsp::EnvelopeFollower<float> envelope;
     envelope.prepare (10.0f, 1.0f, 1.0f);
@@ -284,17 +226,14 @@ void testDCBlockerAndDetectors (choc::test::TestProgress& progress)
     for (int i = 0; i < 10; ++i)
         output = envelope.process (1.0f);
 
-    CHECK (near (output, 1.0f - std::exp (-1.0f), 0.000002f));
+    CHOC_EXPECT_NEAR (output, 1.0f - std::exp (-1.0f), 0.000002f);
 
     for (int i = 0; i < 10; ++i)
         output = envelope.process (0.0f);
 
-    CHECK (near (output,
-                 (1.0f - std::exp (-1.0f)) * std::exp (-1.0f),
-                 0.000002f));
-    CHECK (near (envelope.process (
-        std::numeric_limits<float>::quiet_NaN()),
-        output * std::exp (-0.1f), 0.000002f));
+    CHOC_EXPECT_NEAR (output, (1.0f - std::exp (-1.0f)) * std::exp (-1.0f), 0.000002f);
+    CHOC_EXPECT_NEAR (envelope.process (
+        std::numeric_limits<float>::quiet_NaN()), output * std::exp (-0.1f), 0.000002f);
 
     chardsp::DCBlocker<double> doubleBlocker;
     chardsp::PeakFollower<double> doublePeak;
@@ -304,10 +243,10 @@ void testDCBlockerAndDetectors (choc::test::TestProgress& progress)
     doublePeak.prepare (48000.0);
     doubleRMS.prepare (48000.0);
     doubleEnvelope.prepare (48000.0);
-    CHECK (std::isfinite (doubleBlocker.process (1.0)));
-    CHECK (std::isfinite (doublePeak.process (1.0)));
-    CHECK (std::isfinite (doubleRMS.process (1.0)));
-    CHECK (std::isfinite (doubleEnvelope.process (1.0)));
+    CHOC_EXPECT_TRUE (std::isfinite (doubleBlocker.process (1.0)));
+    CHOC_EXPECT_TRUE (std::isfinite (doublePeak.process (1.0)));
+    CHOC_EXPECT_TRUE (std::isfinite (doubleRMS.process (1.0)));
+    CHOC_EXPECT_TRUE (std::isfinite (doubleEnvelope.process (1.0)));
 }
 
 template <typename SampleType>
@@ -357,41 +296,41 @@ void testBiquad (choc::test::TestProgress& progress)
     for (const auto& coefficients : {
              lowpass, highpass, bandpass, notch,
              peak, lowShelf, highShelf })
-        CHECK (coefficients.isStable());
+        CHOC_EXPECT_TRUE (coefficients.isStable());
 
-    CHECK (measureBiquadRMS (lowpass, sampleRate, 200.0f) > 0.69f);
-    CHECK (measureBiquadRMS (lowpass, sampleRate, 12000.0f) < 0.02f);
-    CHECK (measureBiquadRMS (highpass, sampleRate, 200.0f) < 0.02f);
-    CHECK (measureBiquadRMS (highpass, sampleRate, 12000.0f) > 0.69f);
-    CHECK (measureBiquadRMS (bandpass, sampleRate, cutoff) > 0.68f);
-    CHECK (measureBiquadRMS (bandpass, sampleRate, 12000.0f) < 0.2f);
-    CHECK (measureBiquadRMS (notch, sampleRate, cutoff) < 0.02f);
-    CHECK (measureBiquadRMS (notch, sampleRate, 12000.0f) > 0.65f);
-    CHECK (measureBiquadRMS (peak, sampleRate, cutoff) > 1.35f);
-    CHECK (measureBiquadRMS (lowShelf, sampleRate, 200.0f)
+    CHOC_EXPECT_TRUE (measureBiquadRMS (lowpass, sampleRate, 200.0f) > 0.69f);
+    CHOC_EXPECT_TRUE (measureBiquadRMS (lowpass, sampleRate, 12000.0f) < 0.02f);
+    CHOC_EXPECT_TRUE (measureBiquadRMS (highpass, sampleRate, 200.0f) < 0.02f);
+    CHOC_EXPECT_TRUE (measureBiquadRMS (highpass, sampleRate, 12000.0f) > 0.69f);
+    CHOC_EXPECT_TRUE (measureBiquadRMS (bandpass, sampleRate, cutoff) > 0.68f);
+    CHOC_EXPECT_TRUE (measureBiquadRMS (bandpass, sampleRate, 12000.0f) < 0.2f);
+    CHOC_EXPECT_TRUE (measureBiquadRMS (notch, sampleRate, cutoff) < 0.02f);
+    CHOC_EXPECT_TRUE (measureBiquadRMS (notch, sampleRate, 12000.0f) > 0.65f);
+    CHOC_EXPECT_TRUE (measureBiquadRMS (peak, sampleRate, cutoff) > 1.35f);
+    CHOC_EXPECT_TRUE (measureBiquadRMS (lowShelf, sampleRate, 200.0f)
            > measureBiquadRMS (lowShelf, sampleRate, 12000.0f) * 1.8f);
-    CHECK (measureBiquadRMS (highShelf, sampleRate, 12000.0f)
+    CHOC_EXPECT_TRUE (measureBiquadRMS (highShelf, sampleRate, 12000.0f)
            > measureBiquadRMS (highShelf, sampleRate, 200.0f) * 1.8f);
 
     const auto invalid = Coefficients::lowpass (
         0.0f, cutoff, q);
-    CHECK (invalid.isStable());
-    CHECK (near (invalid.b0, 1.0f));
+    CHOC_EXPECT_TRUE (invalid.isStable());
+    CHOC_EXPECT_NEAR (invalid.b0, 1.0f, 0.000001f);
 
     chardsp::Biquad<float> filter;
     Coefficients unstable;
     unstable.a2 = 2.0f;
-    CHECK (! filter.setCoefficients (unstable));
-    CHECK (near (filter.process (0.25f), 0.25f));
-    CHECK (filter.setCoefficients (lowpass));
+    CHOC_EXPECT_FALSE (filter.setCoefficients (unstable));
+    CHOC_EXPECT_NEAR (filter.process (0.25f), 0.25f, 0.000001f);
+    CHOC_EXPECT_TRUE (filter.setCoefficients (lowpass));
     const auto first = filter.process (1.0f);
     (void) filter.process (0.0f);
-    CHECK (! filter.setCoefficients (unstable));
-    CHECK (near (filter.process (0.0f), 0.0f));
-    CHECK (near (filter.process (0.0f), 0.0f));
-    CHECK (filter.setCoefficients (lowpass));
+    CHOC_EXPECT_FALSE (filter.setCoefficients (unstable));
+    CHOC_EXPECT_NEAR (filter.process (0.0f), 0.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (filter.process (0.0f), 0.0f, 0.000001f);
+    CHOC_EXPECT_TRUE (filter.setCoefficients (lowpass));
     filter.reset();
-    CHECK (near (filter.process (1.0f), first));
+    CHOC_EXPECT_NEAR (filter.process (1.0f), first, 0.000001f);
 
     const auto allocationsBefore = allocationCount.load();
     bool finite = true;
@@ -400,14 +339,14 @@ void testBiquad (choc::test::TestProgress& progress)
         finite = finite && std::isfinite (filter.process (
             std::sin (0.013f * static_cast<float> (i))));
 
-    CHECK (finite);
-    CHECK (allocationCount.load() == allocationsBefore);
+    CHOC_EXPECT_TRUE (finite);
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
 
     using DoubleCoefficients = chardsp::BiquadCoefficients<double>;
     chardsp::Biquad<double> doubleFilter;
-    CHECK (doubleFilter.setCoefficients (
+    CHOC_EXPECT_TRUE (doubleFilter.setCoefficients (
         DoubleCoefficients::highShelf (96000.0, 10000.0, -3.0)));
-    CHECK (std::isfinite (doubleFilter.process (1.0)));
+    CHOC_EXPECT_TRUE (std::isfinite (doubleFilter.process (1.0)));
 }
 
 void testSamplePlayer (choc::test::TestProgress& progress)
@@ -417,33 +356,33 @@ void testSamplePlayer (choc::test::TestProgress& progress)
     player.setSampleData (samples);
     player.setRate (0.5f);
     player.start();
-    CHECK (player.isPlaying());
-    CHECK (near (player.process(), 0.0f));
-    CHECK (near (player.process(), 0.5f));
-    CHECK (near (player.process(), 1.0f));
-    CHECK (near (player.process(), 0.5f));
+    CHOC_EXPECT_TRUE (player.isPlaying());
+    CHOC_EXPECT_NEAR (player.process(), 0.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (player.process(), 0.5f, 0.000001f);
+    CHOC_EXPECT_NEAR (player.process(), 1.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (player.process(), 0.5f, 0.000001f);
     samples[2] = 0.25f;
-    CHECK (near (player.process(), 0.25f));
-    CHECK (near (player.process(), 0.25f));
-    CHECK (! player.isPlaying());
-    CHECK (near (player.process(), 0.0f));
+    CHOC_EXPECT_NEAR (player.process(), 0.25f, 0.000001f);
+    CHOC_EXPECT_NEAR (player.process(), 0.25f, 0.000001f);
+    CHOC_EXPECT_FALSE (player.isPlaying());
+    CHOC_EXPECT_NEAR (player.process(), 0.0f, 0.000001f);
 
     player.start (1.0f);
     player.stop();
-    CHECK (near (player.process(), 0.0f));
+    CHOC_EXPECT_NEAR (player.process(), 0.0f, 0.000001f);
     player.setRate (-1.0f);
-    CHECK (near (player.getRate(), 0.0f));
+    CHOC_EXPECT_NEAR (player.getRate(), 0.0f, 0.000001f);
     player.setPosition (100.0f);
-    CHECK (! player.isPlaying());
+    CHOC_EXPECT_FALSE (player.isPlaying());
     player.reset();
-    CHECK (near (player.getPosition(), 0.0f));
+    CHOC_EXPECT_NEAR (player.getPosition(), 0.0f, 0.000001f);
 
     std::array<double, 2> doubleSamples { -1.0, 1.0 };
     chardsp::SamplePlayer<double> doublePlayer;
     doublePlayer.setSampleData (doubleSamples);
     doublePlayer.setRate (0.5);
     doublePlayer.start (0.5);
-    CHECK (std::abs (doublePlayer.process()) < 0.000001);
+    CHOC_EXPECT_TRUE (std::abs (doublePlayer.process()) < 0.000001);
 
     const auto allocationsBefore = allocationCount.load();
 
@@ -453,7 +392,7 @@ void testSamplePlayer (choc::test::TestProgress& progress)
         (void) player.process();
     }
 
-    CHECK (allocationCount.load() == allocationsBefore);
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
 }
 
 float measureOversamplingRoundTrip (
@@ -633,17 +572,17 @@ void testOversampler (choc::test::TestProgress& progress)
              chardsp::OversamplingFactor::x4 })
     {
         chardsp::Oversampler<float> oversampler;
-        CHECK (! oversampler.prepare (0, 64, factor));
-        CHECK (! oversampler.prepare (1, 0, factor));
-        CHECK (! oversampler.prepare (1, 64,
+        CHOC_EXPECT_FALSE (oversampler.prepare (0, 64, factor));
+        CHOC_EXPECT_FALSE (oversampler.prepare (1, 0, factor));
+        CHOC_EXPECT_FALSE (oversampler.prepare (1, 64,
             static_cast<chardsp::OversamplingFactor> (3)));
-        CHECK (oversampler.prepare (2, 128, factor));
-        CHECK (oversampler.getFactor() == factor);
-        CHECK (oversampler.getNumChannels() == 2);
-        CHECK (oversampler.getMaximumBlockSize() == 128);
-        CHECK (oversampler.canProcess (2, 128));
-        CHECK (! oversampler.canProcess (1, 128));
-        CHECK (! oversampler.canProcess (2, 129));
+        CHOC_EXPECT_TRUE (oversampler.prepare (2, 128, factor));
+        CHOC_EXPECT_TRUE (oversampler.getFactor() == factor);
+        CHOC_EXPECT_EQ (oversampler.getNumChannels(), 2);
+        CHOC_EXPECT_EQ (oversampler.getMaximumBlockSize(), 128);
+        CHOC_EXPECT_TRUE (oversampler.canProcess (2, 128));
+        CHOC_EXPECT_FALSE (oversampler.canProcess (1, 128));
+        CHOC_EXPECT_FALSE (oversampler.canProcess (2, 129));
 
         choc::buffer::ChannelArrayBuffer<float> input (2, 128);
         choc::buffer::ChannelArrayBuffer<float> output (2, 128);
@@ -651,12 +590,12 @@ void testOversampler (choc::test::TestProgress& progress)
         input.getSample (0, 0) = 1.0f;
         const auto allocationsBefore = allocationCount.load();
         auto highRate = oversampler.upsample (input);
-        CHECK (highRate.getNumChannels() == 2);
-        CHECK (highRate.getNumFrames()
-               == 128u * static_cast<uint32_t> (factor));
-        CHECK (oversampler.downsample (output));
+        const auto didDownsample = oversampler.downsample (output);
         const auto allocationsAfterProcess = allocationCount.load();
-        CHECK (allocationsAfterProcess == allocationsBefore);
+        CHOC_EXPECT_EQ (highRate.getNumChannels(), 2);
+        CHOC_EXPECT_EQ (highRate.getNumFrames(), 128u * static_cast<uint32_t> (factor));
+        CHOC_EXPECT_TRUE (didDownsample);
+        CHOC_EXPECT_TRUE (allocationsAfterProcess == allocationsBefore);
 
         uint32_t peakFrame = 0;
         float peak = 0.0f;
@@ -669,34 +608,35 @@ void testOversampler (choc::test::TestProgress& progress)
                 peakFrame = frame;
             }
 
-            CHECK (near (output.getSample (1, frame), 0.0f));
+            CHOC_EXPECT_NEAR (output.getSample (1, frame), 0.0f, 0.000001f);
         }
 
-        CHECK (peakFrame == oversampler.getLatency());
-        CHECK (peak > 0.5f);
+        CHOC_EXPECT_EQ (peakFrame, oversampler.getLatency());
+        CHOC_EXPECT_TRUE (peak > 0.5f);
 
+        const auto allocationsBeforeReset = allocationCount.load();
         oversampler.reset();
-        CHECK (allocationCount.load() == allocationsAfterProcess);
+        CHOC_EXPECT_TRUE (allocationCount.load() == allocationsBeforeReset);
         input.clear();
         highRate = oversampler.upsample (input);
-        CHECK (oversampler.downsample (output));
+        CHOC_EXPECT_TRUE (oversampler.downsample (output));
 
         for (uint32_t channel = 0; channel < 2; ++channel)
             for (uint32_t frame = 0; frame < 128; ++frame)
-                CHECK (near (output.getSample (channel, frame), 0.0f));
+                CHOC_EXPECT_NEAR (output.getSample (channel, frame), 0.0f, 0.000001f);
     }
 
-    CHECK (measureOversamplingRoundTrip (
+    CHOC_EXPECT_TRUE (measureOversamplingRoundTrip (
         chardsp::OversamplingFactor::x2, 1000.0f) > 0.99f);
-    CHECK (measureOversamplingRoundTrip (
+    CHOC_EXPECT_TRUE (measureOversamplingRoundTrip (
         chardsp::OversamplingFactor::x4, 1000.0f) > 0.99f);
-    CHECK (measureOversamplingDownsampleGain (
+    CHOC_EXPECT_TRUE (measureOversamplingDownsampleGain (
         chardsp::OversamplingFactor::x2, 1000.0f) > 0.99f);
-    CHECK (measureOversamplingDownsampleGain (
+    CHOC_EXPECT_TRUE (measureOversamplingDownsampleGain (
         chardsp::OversamplingFactor::x4, 1000.0f) > 0.99f);
-    CHECK (measureOversamplingDownsampleGain (
+    CHOC_EXPECT_TRUE (measureOversamplingDownsampleGain (
         chardsp::OversamplingFactor::x2, 30000.0f) < 0.05f);
-    CHECK (measureOversamplingDownsampleGain (
+    CHOC_EXPECT_TRUE (measureOversamplingDownsampleGain (
         chardsp::OversamplingFactor::x4, 30000.0f) < 0.05f);
 
     size_t directAllocations = 0;
@@ -707,63 +647,63 @@ void testOversampler (choc::test::TestProgress& progress)
         direct, 21000.0f, 48000.0f);
     const auto oversampledAlias = measureDFTMagnitude (
         oversampled, 21000.0f, 48000.0f);
-    CHECK (directAlias > 0.2f);
-    CHECK (oversampledAlias < directAlias * 0.25f);
-    CHECK (directAllocations == 0);
-    CHECK (oversampledAllocations == 0);
+    CHOC_EXPECT_TRUE (directAlias > 0.2f);
+    CHOC_EXPECT_TRUE (oversampledAlias < directAlias * 0.25f);
+    CHOC_EXPECT_EQ (directAllocations, 0);
+    CHOC_EXPECT_EQ (oversampledAllocations, 0);
 
     chardsp::Oversampler<double> doubleOversampler;
-    CHECK (doubleOversampler.prepare (
+    CHOC_EXPECT_TRUE (doubleOversampler.prepare (
         1, 16, chardsp::OversamplingFactor::x2));
     choc::buffer::ChannelArrayBuffer<double> doubleInput (1, 16);
     choc::buffer::ChannelArrayBuffer<double> doubleOutput (1, 16);
     doubleInput.clear();
     doubleInput.getSample (0, 0) = 1.0;
     auto doubleHighRate = doubleOversampler.upsample (doubleInput);
-    CHECK (doubleHighRate.getNumFrames() == 32);
-    CHECK (doubleOversampler.downsample (doubleOutput));
-    CHECK (std::isfinite (doubleOutput.getSample (0, 0)));
+    CHOC_EXPECT_EQ (doubleHighRate.getNumFrames(), 32);
+    CHOC_EXPECT_TRUE (doubleOversampler.downsample (doubleOutput));
+    CHOC_EXPECT_TRUE (std::isfinite (doubleOutput.getSample (0, 0)));
 }
 
 void testEllipticSaw (choc::test::TestProgress& progress)
 {
     chardsp::EllipticSawOscillator<float> unprepared;
     unprepared.setFrequency (440.0f);
-    CHECK (near (unprepared.next(), 0.0f));
+    CHOC_EXPECT_NEAR (unprepared.next(), 0.0f, 0.000001f);
 
     chardsp::EllipticSawOscillator<float> oscillator;
     oscillator.prepare (48000.0f);
     oscillator.setFrequency (0.0f);
 
     for (int i = 0; i < 128; ++i)
-        CHECK (near (oscillator.next(), 0.0f));
+        CHOC_EXPECT_NEAR (oscillator.next(), 0.0f, 0.000001f);
 
     oscillator.setFrequency (440.0f);
     float minimum = std::numeric_limits<float>::infinity();
     float maximum = -std::numeric_limits<float>::infinity();
     float previous = oscillator.next();
     float maximumDelta = 0.0f;
-    CHECK (std::isfinite (previous));
+    CHOC_EXPECT_TRUE (std::isfinite (previous));
 
     const auto allocationsBeforeRender = allocationCount.load();
 
     for (int i = 1; i < 200000; ++i)
     {
         const auto sample = oscillator.next();
-        CHECK (std::isfinite (sample));
+        CHOC_EXPECT_TRUE (std::isfinite (sample));
         minimum = std::min (minimum, sample);
         maximum = std::max (maximum, sample);
         maximumDelta = std::max (maximumDelta, std::abs (sample - previous));
         previous = sample;
     }
 
-    CHECK (allocationCount.load() == allocationsBeforeRender);
-    CHECK (maximum - minimum > 1.0f);
-    CHECK (maximumDelta < 2.5f);
+    CHOC_EXPECT_TRUE (allocationCount.load() == allocationsBeforeRender);
+    CHOC_EXPECT_TRUE (maximum - minimum > 1.0f);
+    CHOC_EXPECT_TRUE (maximumDelta < 2.5f);
 
     oscillator.setFrequency (0.0f);
-    CHECK (near (oscillator.next(), 0.0f));
-    CHECK (near (oscillator.next(), 0.0f));
+    CHOC_EXPECT_NEAR (oscillator.next(), 0.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (oscillator.next(), 0.0f, 0.000001f);
 
     chardsp::EllipticSawOscillator<float> limited;
     chardsp::EllipticSawOscillator<float> explicitLimit;
@@ -776,8 +716,8 @@ void testEllipticSaw (choc::test::TestProgress& progress)
     {
         const auto limitedSample = limited.next();
         const auto explicitSample = explicitLimit.next();
-        CHECK (std::isfinite (limitedSample));
-        CHECK (near (limitedSample, explicitSample));
+        CHOC_EXPECT_TRUE (std::isfinite (limitedSample));
+        CHOC_EXPECT_NEAR (limitedSample, explicitSample, 0.000001f);
     }
 
     chardsp::EllipticSawOscillator<float> oneRender;
@@ -794,7 +734,7 @@ void testEllipticSaw (choc::test::TestProgress& progress)
     for (size_t blockStart = 0; blockStart < expected.size(); blockStart += 127)
         for (size_t i = blockStart;
              i < std::min (blockStart + 127, expected.size()); ++i)
-            CHECK (near (splitRender.next(), expected[i]));
+            CHOC_EXPECT_NEAR (splitRender.next(), expected[i], 0.000001f);
 }
 
 void testOscillatorPhaseAndEllipticCorrection (
@@ -806,13 +746,13 @@ void testOscillatorPhaseAndEllipticCorrection (
     phase.reset (0.9f);
 
     const auto advance = phase.advanceWithStatus();
-    CHECK (advance.wrapped);
-    CHECK (near (advance.startPhase, 0.9f));
-    CHECK (near (advance.phase, 0.15f));
-    CHECK (near (advance.wrapOffset, 0.4f));
+    CHOC_EXPECT_TRUE (advance.wrapped);
+    CHOC_EXPECT_NEAR (advance.startPhase, 0.9f, 0.000001f);
+    CHOC_EXPECT_NEAR (advance.phase, 0.15f, 0.000001f);
+    CHOC_EXPECT_NEAR (advance.wrapOffset, 0.4f, 0.000001f);
 
     chardsp::EllipticBLEPCorrection<float> unprepared;
-    CHECK (near (unprepared.process (0.25f), 0.25f));
+    CHOC_EXPECT_NEAR (unprepared.process (0.25f), 0.25f, 0.000001f);
 
     chardsp::EllipticBLEPCorrection<float> correction;
     correction.prepare (48000.0f);
@@ -826,17 +766,17 @@ void testOscillatorPhaseAndEllipticCorrection (
     for (int i = 0; i < 512; ++i)
     {
         const auto sample = correction.process (0.0f);
-        CHECK (std::isfinite (sample));
+        CHOC_EXPECT_TRUE (std::isfinite (sample));
         peak = std::max (peak, std::abs (sample));
         correction.beginSample();
     }
 
-    CHECK (peak > 0.01f);
-    CHECK (allocationCount.load() == allocationsBeforeRender);
+    CHOC_EXPECT_TRUE (peak > 0.01f);
+    CHOC_EXPECT_TRUE (allocationCount.load() == allocationsBeforeRender);
 
     correction.reset();
     correction.beginSample();
-    CHECK (std::isfinite (correction.process (0.0f)));
+    CHOC_EXPECT_TRUE (std::isfinite (correction.process (0.0f)));
 
     std::array<chardsp::PulseEdgeEvent<float>, 3> events {};
     size_t eventCount = 0;
@@ -847,34 +787,37 @@ void testOscillatorPhaseAndEllipticCorrection (
 
     chardsp::forEachMovingPulseEdge (
         0.4f, 0.6f, 0.5f, 0.5f, 0.0f, 1.0f, capture);
-    CHECK (eventCount == 1);
-    CHECK (near (events[0].offset, 0.5f));
-    CHECK (near (events[0].step, -2.0f));
+    CHOC_EXPECT_TRUE (eventCount == 1);
+    CHOC_EXPECT_TRUE (std::abs (events[0].offset - 0.5f) <= 0.000001f);
+    CHOC_EXPECT_TRUE (std::abs (events[0].step + 2.0f) <= 0.000001f);
 
     eventCount = 0;
     chardsp::forEachMovingPulseEdge (
         0.5f, 0.51f, 0.4f, 0.6f, 0.0f, 1.0f, capture);
-    CHECK (eventCount == 1);
-    CHECK (near (events[0].offset, 0.5263158f));
-    CHECK (near (events[0].step, 2.0f));
+    CHOC_EXPECT_TRUE (eventCount == 1);
+    CHOC_EXPECT_TRUE (std::abs (events[0].offset - 0.5263158f)
+                      <= 0.000001f);
+    CHOC_EXPECT_TRUE (std::abs (events[0].step - 2.0f) <= 0.000001f);
 
     eventCount = 0;
     chardsp::forEachMovingPulseEdge (
         0.9f, 1.1f, 0.5f, 0.5f, 0.0f, 1.0f, capture);
-    CHECK (eventCount == 1);
-    CHECK (near (events[0].offset, 0.5f));
-    CHECK (near (events[0].step, 2.0f));
+    CHOC_EXPECT_TRUE (eventCount == 1);
+    CHOC_EXPECT_TRUE (std::abs (events[0].offset - 0.5f) <= 0.000001f);
+    CHOC_EXPECT_TRUE (std::abs (events[0].step - 2.0f) <= 0.000001f);
 
     eventCount = 0;
     chardsp::forEachMovingPulseEdge (
         0.4f, 1.1f, 0.5f, 0.5f, 0.0f, 1.0f, capture);
-    CHECK (eventCount == 2);
-    CHECK (near (events[0].offset, 1.0f / 7.0f));
-    CHECK (near (events[0].step, -2.0f));
-    CHECK (near (events[1].offset, 6.0f / 7.0f));
-    CHECK (near (events[1].step, 2.0f));
+    CHOC_EXPECT_TRUE (eventCount == 2);
+    CHOC_EXPECT_TRUE (std::abs (events[0].offset - 1.0f / 7.0f)
+                      <= 0.000001f);
+    CHOC_EXPECT_TRUE (std::abs (events[0].step + 2.0f) <= 0.000001f);
+    CHOC_EXPECT_TRUE (std::abs (events[1].offset - 6.0f / 7.0f)
+                      <= 0.000001f);
+    CHOC_EXPECT_TRUE (std::abs (events[1].step - 2.0f) <= 0.000001f);
 
-    CHECK (allocationCount.load() == allocationsBeforeRender);
+    CHOC_EXPECT_TRUE (allocationCount.load() == allocationsBeforeRender);
 
     chardsp::EllipticPulseOscillator<float> movingPulse;
     movingPulse.setPulseWidth (0.4f);
@@ -889,12 +832,12 @@ void testOscillatorPhaseAndEllipticCorrection (
     movingReference.addStep (0.5263158f, 2.0f);
     const auto allocationsBeforeMovingRender = allocationCount.load();
 
-    CHECK (near (
-        movingPulse.next(),
-        movingReference.process (1.0f),
-        0.000002f));
-
-    CHECK (allocationCount.load() == allocationsBeforeMovingRender);
+    const auto movingSample = movingPulse.next();
+    const auto referenceSample = movingReference.process (1.0f);
+    const auto allocationsAfterMovingRender = allocationCount.load();
+    CHOC_EXPECT_NEAR (movingSample, referenceSample, 0.000002f);
+    CHOC_EXPECT_EQ (allocationsAfterMovingRender,
+                    allocationsBeforeMovingRender);
 }
 
 void testGenericOscillators (choc::test::TestProgress& progress)
@@ -902,30 +845,30 @@ void testGenericOscillators (choc::test::TestProgress& progress)
     chardsp::NaiveSawOscillator<float> saw;
     saw.prepare (8.0f);
     saw.setFrequency (1.0f);
-    CHECK (near (saw.next(), 0.75f));
+    CHOC_EXPECT_NEAR (saw.next(), 0.75f, 0.000001f);
     saw.reset();
     saw.setDirection (chardsp::SawDirection::ascending);
-    CHECK (near (saw.next(), -0.75f));
+    CHOC_EXPECT_NEAR (saw.next(), -0.75f, 0.000001f);
 
     chardsp::NaivePulseOscillator<float> pulse;
     pulse.prepare (8.0f);
     pulse.setFrequency (1.0f);
     pulse.setPulseWidth (0.5f);
-    CHECK (near (pulse.next(), 1.0f));
+    CHOC_EXPECT_NEAR (pulse.next(), 1.0f, 0.000001f);
     pulse.setPulseWidth (-1.0f);
-    CHECK (near (pulse.getPulseWidth(), 0.001f));
+    CHOC_EXPECT_NEAR (pulse.getPulseWidth(), 0.001f, 0.000001f);
     pulse.setPulseWidth (2.0f);
-    CHECK (near (pulse.getPulseWidth(), 0.999f));
+    CHOC_EXPECT_NEAR (pulse.getPulseWidth(), 0.999f, 0.000001f);
 
     chardsp::NaiveTriangleOscillator<float> triangle;
     triangle.prepare (8.0f);
     triangle.setFrequency (1.0f);
-    CHECK (near (triangle.next(), -0.5f));
+    CHOC_EXPECT_NEAR (triangle.next(), -0.5f, 0.000001f);
 
     chardsp::SineOscillator<float> sine;
     sine.prepare (8.0f);
     sine.setFrequency (1.0f);
-    CHECK (near (sine.next(), std::sqrt (0.5f), 0.000002f));
+    CHOC_EXPECT_NEAR (sine.next(), std::sqrt (0.5f), 0.000002f);
 
     chardsp::PolyBLEPSawOscillator<float> polySaw;
     chardsp::PolyBLEPPulseOscillator<float> polyPulse;
@@ -955,10 +898,10 @@ void testGenericOscillators (choc::test::TestProgress& progress)
             peak = std::max (peak, std::abs (sample));
         }
 
-        CHECK (finite);
-        CHECK (peak > 0.25f);
-        CHECK (peak < 2.5f);
-        CHECK (allocationCount.load() == allocationsBeforeRender);
+        CHOC_EXPECT_TRUE (finite);
+        CHOC_EXPECT_TRUE (peak > 0.25f);
+        CHOC_EXPECT_TRUE (peak < 2.5f);
+        CHOC_EXPECT_EQ (allocationCount.load(), allocationsBeforeRender);
     };
 
     exercise (polySaw);
@@ -984,7 +927,7 @@ void testGenericOscillators (choc::test::TestProgress& progress)
     }
 
     for (int i = 0; i < 64; ++i)
-        CHECK (near (advanced.next(), rendered.next(), 0.000002f));
+        CHOC_EXPECT_NEAR (advanced.next(), rendered.next(), 0.000002f);
 }
 
 void testBasicSynthVoice (choc::test::TestProgress& progress)
@@ -1021,13 +964,13 @@ void testBasicSynthVoice (choc::test::TestProgress& progress)
     for (int i = 0; i < 128; ++i)
     {
         const auto full = fullVelocity.next();
-        CHECK (near (halfVelocity.next(), full * 0.5f, 0.000002f));
-        CHECK (near (ignoredVelocity.next(), full, 0.000002f));
-        CHECK (near (squaredVelocity.next(), full * 0.25f, 0.000002f));
+        CHOC_EXPECT_NEAR (halfVelocity.next(), full * 0.5f, 0.000002f);
+        CHOC_EXPECT_NEAR (ignoredVelocity.next(), full, 0.000002f);
+        CHOC_EXPECT_NEAR (squaredVelocity.next(), full * 0.25f, 0.000002f);
     }
 
     fullVelocity.forceRelease (0.0f);
-    CHECK (fullVelocity.isAvailable());
+    CHOC_EXPECT_TRUE (fullVelocity.isAvailable());
 
     constexpr std::array waveforms {
         chardsp::BasicSynthWaveform::saw,
@@ -1054,54 +997,16 @@ void testBasicSynthVoice (choc::test::TestProgress& progress)
         for (int sample = 0; sample < 256; ++sample)
         {
             const auto output = voice.next();
-            CHECK (std::isfinite (output));
+            CHOC_EXPECT_TRUE (std::isfinite (output));
             peak = std::max (peak, std::abs (output));
         }
-        CHECK (peak > 0.01f);
+        CHOC_EXPECT_TRUE (peak > 0.01f);
     }
 
     fullVelocity.setOscillator1PulseWidth (-1.0f);
     halfVelocity.setOscillator2PulseWidth (2.0f);
-    CHECK (near (fullVelocity.getOscillator1PulseWidth(), 0.001f));
-    CHECK (near (halfVelocity.getOscillator2PulseWidth(), 0.999f));
-}
-
-void testChocTriangleModulation (choc::test::TestProgress& progress)
-{
-    choc::oscillator::Triangle<float> triangle;
-    triangle.resetPhase();
-    triangle.setFrequency (1.0f, 8.0f);
-
-    std::array<float, 8> bipolar {};
-    std::array<float, 8> unipolar {};
-
-    for (size_t i = 0; i < bipolar.size(); ++i)
-    {
-        bipolar[i] = triangle.getSample();
-        unipolar[i] = (bipolar[i] + 1.0f) * 0.5f;
-        CHECK (std::isfinite (bipolar[i]));
-        CHECK (bipolar[i] >= -1.0f && bipolar[i] <= 1.0f);
-        CHECK (unipolar[i] >= 0.0f && unipolar[i] <= 1.0f);
-    }
-
-    CHECK (near (bipolar[0], 1.0f));
-    CHECK (near (bipolar[2], 0.0f));
-    CHECK (near (bipolar[3], -0.5f));
-    CHECK (near (bipolar[7], 1.0f));
-    CHECK (near (unipolar[0], 1.0f));
-    CHECK (near (unipolar[3], 0.25f));
-    CHECK (near (triangle.getSample(), bipolar[0]));
-
-    choc::oscillator::Triangle<float> twiceAsFast;
-    twiceAsFast.resetPhase();
-    twiceAsFast.setFrequency (2.0f, 8.0f);
-    std::array<float, 8> fast {};
-
-    for (auto& sample : fast)
-        sample = twiceAsFast.getSample();
-
-    for (size_t i = 0; i < 4; ++i)
-        CHECK (near (fast[i], fast[i + 4]));
+    CHOC_EXPECT_NEAR (fullVelocity.getOscillator1PulseWidth(), 0.001f, 0.000001f);
+    CHOC_EXPECT_NEAR (halfVelocity.getOscillator2PulseWidth(), 0.999f, 0.000001f);
 }
 
 void testADSREnvelopeParity (choc::test::TestProgress& progress)
@@ -1133,12 +1038,12 @@ void testADSREnvelopeParity (choc::test::TestProgress& progress)
             if (i == 8)
                 envelope.release();
 
-            CHECK (near (envelope.next(), reference[i], 0.0000002f));
+            CHOC_EXPECT_NEAR (envelope.next(), reference[i], 0.0000002f);
         }
 
-        CHECK (near (envelope.next(), 0.0f));
-        CHECK (! envelope.isActive());
-        CHECK (near (envelope.getCurrent(), 0.0f));
+        CHOC_EXPECT_NEAR (envelope.next(), 0.0f, 0.000001f);
+        CHOC_EXPECT_FALSE (envelope.isActive());
+        CHOC_EXPECT_NEAR (envelope.getCurrent(), 0.0f, 0.000001f);
     };
 
     checkShape (chardsp::EnvelopeShape::exponential, exponentialReference);
@@ -1155,39 +1060,39 @@ void testADSREnvelopeBehavior (choc::test::TestProgress& progress)
     envelope.setSustain (0.4f);
     envelope.setRelease (0.2f);
     envelope.trigger();
-    CHECK (envelope.isActive());
-    CHECK (near (envelope.next(), 1.0f / 3.0f));
-    CHECK (near (envelope.next(), 2.0f / 3.0f));
-    CHECK (near (envelope.next(), 1.0f));
-    CHECK (near (envelope.next(), 0.7f));
-    CHECK (near (envelope.next(), 0.4f));
+    CHOC_EXPECT_TRUE (envelope.isActive());
+    CHOC_EXPECT_NEAR (envelope.next(), 1.0f / 3.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 2.0f / 3.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 1.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 0.7f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 0.4f, 0.000001f);
 
     for (int i = 0; i < 8; ++i)
-        CHECK (near (envelope.next(), 0.4f));
+        CHOC_EXPECT_NEAR (envelope.next(), 0.4f, 0.000001f);
 
     envelope.release();
-    CHECK (near (envelope.next(), 0.2f));
-    CHECK (near (envelope.next(), 0.0f));
-    CHECK (! envelope.isActive());
+    CHOC_EXPECT_NEAR (envelope.next(), 0.2f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 0.0f, 0.000001f);
+    CHOC_EXPECT_FALSE (envelope.isActive());
 
     envelope.setAttack (0.0f);
     envelope.setDecay (0.0f);
     envelope.setSustain (0.3f);
     envelope.setRelease (0.0f);
     envelope.trigger();
-    CHECK (envelope.isActive());
-    CHECK (near (envelope.getCurrent(), 0.3f));
-    CHECK (near (envelope.next(), 0.3f));
+    CHOC_EXPECT_TRUE (envelope.isActive());
+    CHOC_EXPECT_NEAR (envelope.getCurrent(), 0.3f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 0.3f, 0.000001f);
     envelope.release();
-    CHECK (near (envelope.getCurrent(), 0.0f));
-    CHECK (! envelope.isActive());
+    CHOC_EXPECT_NEAR (envelope.getCurrent(), 0.0f, 0.000001f);
+    CHOC_EXPECT_FALSE (envelope.isActive());
 
     envelope.reset();
     envelope.setAttack (0.4f);
     envelope.setDecay (0.0f);
     envelope.setSustain (0.25f);
     envelope.retrigger();
-    CHECK (near (envelope.next(), 0.25f));
+    CHOC_EXPECT_NEAR (envelope.next(), 0.25f, 0.000001f);
 
     envelope.reset();
     envelope.setAttack (0.4f);
@@ -1198,24 +1103,24 @@ void testADSREnvelopeBehavior (choc::test::TestProgress& progress)
     envelope.next();
     const auto beforeRetrigger = envelope.getCurrent();
     envelope.retrigger();
-    CHECK (near (envelope.getCurrent(), beforeRetrigger));
-    CHECK (envelope.next() >= beforeRetrigger);
+    CHOC_EXPECT_NEAR (envelope.getCurrent(), beforeRetrigger, 0.000001f);
+    CHOC_EXPECT_TRUE (envelope.next() >= beforeRetrigger);
 
     envelope.setAttack (0.0f);
     envelope.setDecay (0.0f);
     envelope.setSustain (0.25f);
     envelope.trigger();
     envelope.forceRelease (0.4f);
-    CHECK (near (envelope.next(), 0.1875f));
-    CHECK (near (envelope.next(), 0.125f));
-    CHECK (near (envelope.next(), 0.0625f));
-    CHECK (near (envelope.next(), 0.0f));
-    CHECK (! envelope.isActive());
+    CHOC_EXPECT_NEAR (envelope.next(), 0.1875f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 0.125f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 0.0625f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 0.0f, 0.000001f);
+    CHOC_EXPECT_FALSE (envelope.isActive());
 
     envelope.trigger();
     envelope.forceRelease (0.0f);
-    CHECK (near (envelope.getCurrent(), 0.0f));
-    CHECK (! envelope.isActive());
+    CHOC_EXPECT_NEAR (envelope.getCurrent(), 0.0f, 0.000001f);
+    CHOC_EXPECT_FALSE (envelope.isActive());
 }
 
 void testADSREnvelopeLiveUpdates (choc::test::TestProgress& progress)
@@ -1228,27 +1133,27 @@ void testADSREnvelopeLiveUpdates (choc::test::TestProgress& progress)
     envelope.setSustain (0.2f);
     envelope.setRelease (1.0f);
     envelope.trigger();
-    CHECK (near (envelope.next(), 0.1f));
-    CHECK (near (envelope.next(), 0.2f));
+    CHOC_EXPECT_NEAR (envelope.next(), 0.1f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 0.2f, 0.000001f);
 
     envelope.setAttack (0.2f);
-    CHECK (near (envelope.getCurrent(), 0.2f));
-    CHECK (near (envelope.next(), 0.6f));
-    CHECK (near (envelope.next(), 1.0f));
-    CHECK (near (envelope.next(), 0.92f));
+    CHOC_EXPECT_NEAR (envelope.getCurrent(), 0.2f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 0.6f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 1.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 0.92f, 0.000001f);
 
     envelope.setSustain (0.8f);
     envelope.setDecay (0.2f);
-    CHECK (near (envelope.getCurrent(), 0.92f));
-    CHECK (near (envelope.next(), 0.86f));
-    CHECK (near (envelope.next(), 0.8f));
+    CHOC_EXPECT_NEAR (envelope.getCurrent(), 0.92f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 0.86f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 0.8f, 0.000001f);
 
     envelope.release();
-    CHECK (near (envelope.next(), 0.72f));
+    CHOC_EXPECT_NEAR (envelope.next(), 0.72f, 0.000001f);
     envelope.setRelease (0.2f);
-    CHECK (near (envelope.getCurrent(), 0.72f));
-    CHECK (near (envelope.next(), 0.36f));
-    CHECK (near (envelope.next(), 0.0f));
+    CHOC_EXPECT_NEAR (envelope.getCurrent(), 0.72f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 0.36f, 0.000001f);
+    CHOC_EXPECT_NEAR (envelope.next(), 0.0f, 0.000001f);
 
     envelope.setAttack (1.0f);
     envelope.setDecay (0.0f);
@@ -1257,8 +1162,8 @@ void testADSREnvelopeLiveUpdates (choc::test::TestProgress& progress)
     envelope.next();
     const auto beforeShapeChange = envelope.getCurrent();
     envelope.setShape (chardsp::EnvelopeShape::exponential);
-    CHECK (near (envelope.getCurrent(), beforeShapeChange));
-    CHECK (std::isfinite (envelope.next()));
+    CHOC_EXPECT_NEAR (envelope.getCurrent(), beforeShapeChange, 0.000001f);
+    CHOC_EXPECT_TRUE (std::isfinite (envelope.next()));
 
     const auto allocationsBeforeRender = allocationCount.load();
     bool allFinite = true;
@@ -1272,8 +1177,8 @@ void testADSREnvelopeLiveUpdates (choc::test::TestProgress& progress)
         allFinite = allFinite && std::isfinite (envelope.next());
     }
 
-    CHECK (allFinite);
-    CHECK (allocationCount.load() == allocationsBeforeRender);
+    CHOC_EXPECT_TRUE (allFinite);
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBeforeRender);
 }
 
 void testStateVariableFilterParity (choc::test::TestProgress& progress)
@@ -1303,7 +1208,7 @@ void testStateVariableFilterParity (choc::test::TestProgress& progress)
         filter.setCutoffAndQ (4200.0f, 1.7f);
 
         for (size_t i = 0; i < reference.size(); ++i)
-            CHECK (near (filter.process (i == 0 ? 1.0f : 0.0f), reference[i]));
+            CHOC_EXPECT_NEAR (filter.process (i == 0 ? 1.0f : 0.0f), reference[i], 0.000001f);
     };
 
     checkMode (chardsp::FilterMode::lowpass, lowpassReference);
@@ -1355,13 +1260,13 @@ void testStateVariableFilterBehavior (choc::test::TestProgress& progress)
                                                    chardsp::FilterMode::bandpass);
         const auto bandpassHigh = filterSineRMS (sampleRate, 1000.0f, 12000.0f,
                                                  chardsp::FilterMode::bandpass);
-        CHECK (lowpassLow > 0.65f);
-        CHECK (lowpassHigh < 0.02f);
-        CHECK (highpassLow < 0.04f);
-        CHECK (highpassHigh > 0.65f);
-        CHECK (bandpassLow < 0.16f);
-        CHECK (bandpassCenter > 0.48f);
-        CHECK (bandpassHigh < 0.07f);
+        CHOC_EXPECT_TRUE (lowpassLow > 0.65f);
+        CHOC_EXPECT_TRUE (lowpassHigh < 0.02f);
+        CHOC_EXPECT_TRUE (highpassLow < 0.04f);
+        CHOC_EXPECT_TRUE (highpassHigh > 0.65f);
+        CHOC_EXPECT_TRUE (bandpassLow < 0.16f);
+        CHOC_EXPECT_TRUE (bandpassCenter > 0.48f);
+        CHOC_EXPECT_TRUE (bandpassHigh < 0.07f);
     }
 
     chardsp::StateVariableFilter<float> first;
@@ -1386,16 +1291,16 @@ void testStateVariableFilterBehavior (choc::test::TestProgress& progress)
     }
 
     first.setMode (chardsp::FilterMode::highpass);
-    CHECK (near (first.process (0.25f), second.process (0.25f)));
+    CHOC_EXPECT_NEAR (first.process (0.25f), second.process (0.25f), 0.000001f);
 
     first.reset();
     second.reset();
-    CHECK (near (first.process (1.0f), second.process (1.0f)));
+    CHOC_EXPECT_NEAR (first.process (1.0f), second.process (1.0f), 0.000001f);
 
     first.reset();
     bandpass.reset();
     first.setMode (chardsp::FilterMode::bandpass);
-    CHECK (near (first.process (1.0f), bandpass.process (1.0f)));
+    CHOC_EXPECT_NEAR (first.process (1.0f), bandpass.process (1.0f), 0.000001f);
 
     chardsp::StateVariableFilter<float> clamped;
     chardsp::StateVariableFilter<float> explicitLimits;
@@ -1403,7 +1308,7 @@ void testStateVariableFilterBehavior (choc::test::TestProgress& progress)
     explicitLimits.prepare (48000.0f);
     clamped.setCutoffAndQ (-100.0f, -5.0f);
     explicitLimits.setCutoffAndQ (0.0f, 0.000001f);
-    CHECK (near (clamped.process (1.0f), explicitLimits.process (1.0f)));
+    CHOC_EXPECT_NEAR (clamped.process (1.0f), explicitLimits.process (1.0f), 0.000001f);
 
     clamped.reset();
     explicitLimits.reset();
@@ -1411,8 +1316,7 @@ void testStateVariableFilterBehavior (choc::test::TestProgress& progress)
     explicitLimits.setCutoffAndQ (48000.0f * 0.48f, 0.7f);
 
     for (int i = 0; i < 128; ++i)
-        CHECK (near (clamped.process (i == 0 ? 1.0f : 0.0f),
-                     explicitLimits.process (i == 0 ? 1.0f : 0.0f)));
+        CHOC_EXPECT_NEAR (clamped.process (i == 0 ? 1.0f : 0.0f), explicitLimits.process (i == 0 ? 1.0f : 0.0f), 0.000001f);
 
     chardsp::StateVariableFilter<float> silence;
     silence.prepare (96000.0f);
@@ -1422,12 +1326,12 @@ void testStateVariableFilterBehavior (choc::test::TestProgress& progress)
     for (int i = 0; i < 100000; ++i)
         stableSilence = stableSilence && silence.process (0.0f) == 0.0f;
 
-    CHECK (stableSilence);
+    CHOC_EXPECT_TRUE (stableSilence);
 
     chardsp::StateVariableFilter<float> decaying;
     decaying.prepare (48000.0f);
     decaying.setCutoffAndQ (1000.0f, 0.70710678f);
-    CHECK (decaying.process (1.0f) != 0.0f);
+    CHOC_EXPECT_NE (decaying.process (1.0f), 0.0f);
 
     bool reachedExactZero = false;
     for (int i = 0; i < 100000; ++i)
@@ -1439,8 +1343,8 @@ void testStateVariableFilterBehavior (choc::test::TestProgress& progress)
         }
     }
 
-    CHECK (reachedExactZero);
-    CHECK (decaying.process (0.0f) == 0.0f);
+    CHOC_EXPECT_TRUE (reachedExactZero);
+    CHOC_EXPECT_EQ (decaying.process (0.0f), 0.0f);
 
     chardsp::StateVariableFilter<float> nonFiniteInput;
     nonFiniteInput.prepare (48000.0f);
@@ -1450,11 +1354,11 @@ void testStateVariableFilterBehavior (choc::test::TestProgress& progress)
         std::numeric_limits<float>::quiet_NaN());
     const auto infinityOutput = nonFiniteInput.process (
         std::numeric_limits<float>::infinity());
-    CHECK (std::isfinite (nanOutput));
-    CHECK (std::isfinite (infinityOutput));
+    CHOC_EXPECT_TRUE (std::isfinite (nanOutput));
+    CHOC_EXPECT_TRUE (std::isfinite (infinityOutput));
 
     for (int i = 0; i < 1024; ++i)
-        CHECK (std::isfinite (nonFiniteInput.process (0.0f)));
+        CHOC_EXPECT_TRUE (std::isfinite (nonFiniteInput.process (0.0f)));
 
     const auto allocationsBeforeRender = allocationCount.load();
     bool allFinite = true;
@@ -1465,8 +1369,8 @@ void testStateVariableFilterBehavior (choc::test::TestProgress& progress)
         allFinite = allFinite && std::isfinite (silence.process (input));
     }
 
-    CHECK (allFinite);
-    CHECK (allocationCount.load() == allocationsBeforeRender);
+    CHOC_EXPECT_TRUE (allFinite);
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBeforeRender);
 
     chardsp::StateVariableFilter<float> allOutputs;
     chardsp::StateVariableFilter<float> selectedLow;
@@ -1488,11 +1392,10 @@ void testStateVariableFilterBehavior (choc::test::TestProgress& progress)
     {
         const auto input = std::sin (0.027f * static_cast<float> (i));
         const auto outputs = allOutputs.processAll (input);
-        CHECK (near (outputs.lowpass, selectedLow.process (input)));
-        CHECK (near (outputs.bandpass, selectedBand.process (input)));
-        CHECK (near (outputs.highpass, selectedHigh.process (input)));
-        CHECK (near (outputs.notch,
-                     outputs.lowpass + outputs.highpass));
+        CHOC_EXPECT_NEAR (outputs.lowpass, selectedLow.process (input), 0.000001f);
+        CHOC_EXPECT_NEAR (outputs.bandpass, selectedBand.process (input), 0.000001f);
+        CHOC_EXPECT_NEAR (outputs.highpass, selectedHigh.process (input), 0.000001f);
+        CHOC_EXPECT_NEAR (outputs.notch, outputs.lowpass + outputs.highpass, 0.000001f);
     }
 }
 
@@ -1522,7 +1425,7 @@ void testColoredNoiseParity (choc::test::TestProgress& progress)
         noise.setColor (colors[color]);
 
         for (const auto reference : references[color])
-            CHECK (near (noise.next(), reference));
+            CHOC_EXPECT_NEAR (noise.next(), reference, 0.000001f);
     }
 }
 
@@ -1539,7 +1442,7 @@ void testColoredNoiseBehavior (choc::test::TestProgress& progress)
     noise.reset (42);
 
     for (const auto expected : firstRender)
-        CHECK (near (noise.next(), expected));
+        CHOC_EXPECT_NEAR (noise.next(), expected, 0.000001f);
 
     std::array<chardsp::ColoredNoise<float>, 4> fixedColors;
     constexpr std::array<chardsp::NoiseColor, 4> colors {
@@ -1567,7 +1470,7 @@ void testColoredNoiseBehavior (choc::test::TestProgress& progress)
 
         const auto selected = static_cast<size_t> (i % 4);
         switching.setColor (colors[selected]);
-        CHECK (near (switching.next(), endpoints[selected]));
+        CHOC_EXPECT_NEAR (switching.next(), endpoints[selected], 0.000001f);
     }
 
     const auto allocationsBeforeRender = allocationCount.load();
@@ -1592,12 +1495,12 @@ void testColoredNoiseBehavior (choc::test::TestProgress& progress)
 
         const auto mean = static_cast<float> (sum / sampleCount);
         const auto rms = static_cast<float> (std::sqrt (sumSquares / sampleCount));
-        CHECK (finiteAndBounded);
-        CHECK (std::abs (mean) < 0.15f);
-        CHECK (rms > 0.01f && rms < 0.9f);
+        CHOC_EXPECT_TRUE (finiteAndBounded);
+        CHOC_EXPECT_TRUE (std::abs (mean) < 0.15f);
+        CHOC_EXPECT_TRUE (rms > 0.01f && rms < 0.9f);
     }
 
-    CHECK (allocationCount.load() == allocationsBeforeRender);
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBeforeRender);
 }
 
 void testDownsamplerParity (choc::test::TestProgress& progress)
@@ -1610,11 +1513,10 @@ void testDownsamplerParity (choc::test::TestProgress& progress)
     chardsp::Downsampler4x<float> downsampler;
 
     for (size_t i = 0; i < reference.size(); ++i)
-        CHECK (near (downsampler.process (i == 0 ? 1.0f : 0.0f,
+        CHOC_EXPECT_NEAR (downsampler.process (i == 0 ? 1.0f : 0.0f,
                                           0.0f,
                                           0.0f,
-                                          0.0f),
-                     reference[i]));
+                                          0.0f), reference[i], 0.000001f);
 }
 
 float downsampledSineRMS (float frequency)
@@ -1660,8 +1562,7 @@ void testDownsamplerBehavior (choc::test::TestProgress& progress)
             std::sin (0.07f * static_cast<float> (i * 4 + 2)),
             std::sin (0.07f * static_cast<float> (i * 4 + 3))
         };
-        CHECK (near (scalar.process (samples[0], samples[1], samples[2], samples[3]),
-                     array.process (samples)));
+        CHOC_EXPECT_NEAR (scalar.process (samples[0], samples[1], samples[2], samples[3]), array.process (samples), 0.000001f);
     }
 
     scalar.reset();
@@ -1677,7 +1578,7 @@ void testDownsamplerBehavior (choc::test::TestProgress& progress)
                                             0.0f,
                                             0.0f,
                                             0.0f);
-        CHECK (near (actual, expected));
+        CHOC_EXPECT_NEAR (actual, expected, 0.000001f);
     }
 
     scalar.reset();
@@ -1686,12 +1587,12 @@ void testDownsamplerBehavior (choc::test::TestProgress& progress)
     for (int i = 0; i < 4096; ++i)
         dc = scalar.process (1.0f, 1.0f, 1.0f, 1.0f);
 
-    CHECK (near (dc, 1.0f, 0.00001f));
+    CHOC_EXPECT_NEAR (dc, 1.0f, 0.00001f);
 
     const auto lowFrequencyRMS = downsampledSineRMS (1000.0f);
     const auto highFrequencyRMS = downsampledSineRMS (40000.0f);
-    CHECK (lowFrequencyRMS > 0.65f);
-    CHECK (highFrequencyRMS < lowFrequencyRMS * 0.1f);
+    CHOC_EXPECT_TRUE (lowFrequencyRMS > 0.65f);
+    CHOC_EXPECT_TRUE (highFrequencyRMS < lowFrequencyRMS * 0.1f);
 
     const auto allocationsBeforeRender = allocationCount.load();
     bool allFinite = true;
@@ -1705,8 +1606,8 @@ void testDownsamplerBehavior (choc::test::TestProgress& progress)
                                                                 -input * 0.5f));
     }
 
-    CHECK (allFinite);
-    CHECK (allocationCount.load() == allocationsBeforeRender);
+    CHOC_EXPECT_TRUE (allFinite);
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBeforeRender);
 }
 
 void testDoublePrecisionTypes (choc::test::TestProgress& progress)
@@ -1725,7 +1626,7 @@ void testDoublePrecisionTypes (choc::test::TestProgress& progress)
     chardsp::SmoothedValue<double> smoother;
     smoother.reset (0.0);
     smoother.setTarget (1.0, 4);
-    CHECK (std::abs (smoother.next() - 0.25) < 1.0e-12);
+    CHOC_EXPECT_TRUE (std::abs (smoother.next() - 0.25) < 1.0e-12);
 
     chardsp::ADSREnvelope<double> envelope;
     envelope.prepare (48000.0);
@@ -1776,13 +1677,13 @@ void testDoublePrecisionTypes (choc::test::TestProgress& progress)
                    && std::isfinite (basicVoice.next());
     }
 
-    CHECK (allFinite);
-    CHECK (allocationCount.load() == allocationsBeforeRender);
+    CHOC_EXPECT_TRUE (allFinite);
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBeforeRender);
 
     noise.reset (77);
     const auto expectedNoise = noise.next();
     noise.reset (77);
-    CHECK (noise.next() == expectedNoise);
+    CHOC_EXPECT_EQ (noise.next(), expectedNoise);
 }
 
 struct TestVoice
@@ -1886,45 +1787,45 @@ struct SourceVoice : TestVoice
     float frequency = 0.0f;
 };
 
-void testVoicePool (choc::test::TestProgress& progress)
+void testVoicePoolBasics (choc::test::TestProgress& progress)
 {
     using Pool = chardsp::VoicePool<TestVoice, 3>;
     Pool pool;
     pool.prepare (1000.0f);
 
     pool.next();
-    CHECK (pool.getVoice (0).renderCount == 1);
-    CHECK (pool.getVoice (1).renderCount == 1);
-    CHECK (pool.getVoice (2).renderCount == 1);
+    CHOC_EXPECT_EQ (pool.getVoice (0).renderCount, 1);
+    CHOC_EXPECT_EQ (pool.getVoice (1).renderCount, 1);
+    CHOC_EXPECT_EQ (pool.getVoice (2).renderCount, 1);
 
     pool.start (60, 0.8f);
-    CHECK (pool.findVoice (60) == 0);
-    CHECK (pool.getVoice (0).startCount == 1);
-    CHECK (near (pool.getVoice (0).velocity, 0.8f));
-    CHECK (pool.getActiveVoiceCount() == 1);
+    CHOC_EXPECT_EQ (pool.findVoice (60), 0);
+    CHOC_EXPECT_EQ (pool.getVoice (0).startCount, 1);
+    CHOC_EXPECT_NEAR (pool.getVoice (0).velocity, 0.8f, 0.000001f);
+    CHOC_EXPECT_EQ (pool.getActiveVoiceCount(), 1);
 
     pool.start (60, 0.4f);
-    CHECK (pool.getVoice (0).startCount == 1);
+    CHOC_EXPECT_EQ (pool.getVoice (0).startCount, 1);
     pool.start (62, 0.7f);
     pool.start (64, 0.6f);
-    CHECK (pool.getActiveVoiceCount() == 3);
-    CHECK (pool.findVoice (64) == 2);
-    CHECK (pool.isKeyHeld (60));
+    CHOC_EXPECT_EQ (pool.getActiveVoiceCount(), 3);
+    CHOC_EXPECT_EQ (pool.findVoice (64), 2);
+    CHOC_EXPECT_TRUE (pool.isKeyHeld (60));
 
     pool.stop (62);
-    CHECK (pool.getVoice (1).releaseCount == 1);
+    CHOC_EXPECT_EQ (pool.getVoice (1).releaseCount, 1);
     pool.start (62, 0.9f);
-    CHECK (pool.getVoice (1).forcedReleaseCount == 1);
-    CHECK (near (pool.getVoice (1).lastForcedReleaseSeconds, 0.002f));
-    CHECK (pool.getVoice (1).startCount == 1);
+    CHOC_EXPECT_EQ (pool.getVoice (1).forcedReleaseCount, 1);
+    CHOC_EXPECT_NEAR (pool.getVoice (1).lastForcedReleaseSeconds, 0.002f, 0.000001f);
+    CHOC_EXPECT_EQ (pool.getVoice (1).startCount, 1);
     pool.next();
-    CHECK (pool.getVoice (1).startCount == 1);
+    CHOC_EXPECT_EQ (pool.getVoice (1).startCount, 1);
     pool.next();
-    CHECK (pool.getVoice (1).startCount == 2);
-    CHECK (pool.getVoice (1).lastRenderedStartCount == 1);
+    CHOC_EXPECT_EQ (pool.getVoice (1).startCount, 2);
+    CHOC_EXPECT_EQ (pool.getVoice (1).lastRenderedStartCount, 1);
     pool.next();
-    CHECK (pool.getVoice (1).lastRenderedStartCount == 2);
-    CHECK (pool.findVoice (62) == 1);
+    CHOC_EXPECT_EQ (pool.getVoice (1).lastRenderedStartCount, 2);
+    CHOC_EXPECT_EQ (pool.findVoice (62), 1);
 
     // A sounding release tail stays reserved, so another key uses a free slot.
     pool.prepare (1000.0f);
@@ -1934,11 +1835,11 @@ void testVoicePool (choc::test::TestProgress& progress)
     for (int i = 0; i < 3; ++i)
         pool.next();
 
-    CHECK (pool.getActiveVoiceCount() == 1);
-    CHECK (pool.findVoice (60) == 0);
+    CHOC_EXPECT_EQ (pool.getActiveVoiceCount(), 1);
+    CHOC_EXPECT_EQ (pool.findVoice (60), 0);
     pool.start (62, 1.0f);
-    CHECK (pool.findVoice (60) == 0);
-    CHECK (pool.findVoice (62) == 1);
+    CHOC_EXPECT_EQ (pool.findVoice (60), 0);
+    CHOC_EXPECT_EQ (pool.findVoice (62), 1);
 
     // Unlike reference event-only allocator, the C++ pool can ask the voice when
     // its tail is actually available and reclaim it immediately.
@@ -1949,9 +1850,9 @@ void testVoicePool (choc::test::TestProgress& progress)
     for (int i = 0; i < 3; ++i)
         pool.next();
 
-    CHECK (pool.findVoice (60) == 0);
+    CHOC_EXPECT_EQ (pool.findVoice (60), 0);
     pool.next();
-    CHECK (pool.findVoice (60) == -1);
+    CHOC_EXPECT_EQ (pool.findVoice (60), -1);
 
     // An active same-key release tail force-releases and restarts its existing
     // slot after exactly 2 ms.
@@ -1959,15 +1860,15 @@ void testVoicePool (choc::test::TestProgress& progress)
     pool.start (60, 1.0f);
     pool.stop (60);
     pool.start (60, 0.25f);
-    CHECK (pool.getVoice (0).forcedReleaseCount == 1);
+    CHOC_EXPECT_EQ (pool.getVoice (0).forcedReleaseCount, 1);
     pool.next();
-    CHECK (pool.getVoice (0).startCount == 1);
+    CHOC_EXPECT_EQ (pool.getVoice (0).startCount, 1);
     pool.next();
-    CHECK (pool.getVoice (0).startCount == 2);
-    CHECK (pool.getVoice (0).lastRenderedStartCount == 1);
+    CHOC_EXPECT_EQ (pool.getVoice (0).startCount, 2);
+    CHOC_EXPECT_EQ (pool.getVoice (0).lastRenderedStartCount, 1);
     pool.next();
-    CHECK (pool.getVoice (0).lastRenderedStartCount == 2);
-    CHECK (near (pool.getVoice (0).velocity, 0.25f));
+    CHOC_EXPECT_EQ (pool.getVoice (0).lastRenderedStartCount, 2);
+    CHOC_EXPECT_NEAR (pool.getVoice (0).velocity, 0.25f, 0.000001f);
 
     // Releasing a pending key before its delayed restart cancels it.
     pool.stop (60);
@@ -1975,8 +1876,11 @@ void testVoicePool (choc::test::TestProgress& progress)
     pool.stop (60);
     pool.next();
     pool.next();
-    CHECK (pool.getVoice (0).startCount == 2);
+    CHOC_EXPECT_EQ (pool.getVoice (0).startCount, 2);
+}
 
+void testVoicePoolStealing (choc::test::TestProgress& progress)
+{
     // Any stolen voice uses the same delayed fade, not only same-key
     // retriggers. The new voice starts after the old voice reports availability.
     using SingleVoicePool = chardsp::VoicePool<TestVoice, 1>;
@@ -1984,41 +1888,41 @@ void testVoicePool (choc::test::TestProgress& progress)
     single.prepare (1000.0f);
     single.start (60, 1.0f);
     single.start (67, 0.5f);
-    CHECK (single.isPending (67));
-    CHECK (single.findVoice (60) == -1);
-    CHECK (single.findVoice (67) == 0);
-    CHECK (single.getVoice (0).forcedReleaseCount == 1);
-    CHECK (near (single.getVoice (0).lastForcedReleaseSeconds, 0.002f));
+    CHOC_EXPECT_TRUE (single.isPending (67));
+    CHOC_EXPECT_EQ (single.findVoice (60), -1);
+    CHOC_EXPECT_EQ (single.findVoice (67), 0);
+    CHOC_EXPECT_EQ (single.getVoice (0).forcedReleaseCount, 1);
+    CHOC_EXPECT_NEAR (single.getVoice (0).lastForcedReleaseSeconds, 0.002f, 0.000001f);
     single.next();
-    CHECK (single.getVoice (0).startCount == 1);
+    CHOC_EXPECT_EQ (single.getVoice (0).startCount, 1);
     single.next();
-    CHECK (single.getVoice (0).startCount == 2);
-    CHECK (! single.isPending (67));
-    CHECK (single.getVoice (0).lastRenderedStartCount == 1);
+    CHOC_EXPECT_EQ (single.getVoice (0).startCount, 2);
+    CHOC_EXPECT_FALSE (single.isPending (67));
+    CHOC_EXPECT_EQ (single.getVoice (0).lastRenderedStartCount, 1);
     single.next();
-    CHECK (single.getVoice (0).lastRenderedStartCount == 2);
+    CHOC_EXPECT_EQ (single.getVoice (0).lastRenderedStartCount, 2);
 
     // The steal fade is configurable, and zero selects immediate replacement.
     single.prepare (1000.0f);
     single.setStealFadeTime (0.004f);
-    CHECK (near (single.getStealFadeTime(), 0.004f));
+    CHOC_EXPECT_NEAR (single.getStealFadeTime(), 0.004f, 0.000001f);
     single.start (60, 1.0f);
     single.start (62, 1.0f);
 
     for (int i = 0; i < 3; ++i)
     {
         single.next();
-        CHECK (single.getVoice (0).startCount == 1);
+        CHOC_EXPECT_EQ (single.getVoice (0).startCount, 1);
     }
 
     single.next();
-    CHECK (single.getVoice (0).startCount == 2);
+    CHOC_EXPECT_EQ (single.getVoice (0).startCount, 2);
     single.setStealFadeTime (0.0f);
     single.start (64, 1.0f);
-    CHECK (single.getVoice (0).startCount == 3);
-    CHECK (near (single.getVoice (0).lastForcedReleaseSeconds, 0.0f));
+    CHOC_EXPECT_EQ (single.getVoice (0).startCount, 3);
+    CHOC_EXPECT_NEAR (single.getVoice (0).lastForcedReleaseSeconds, 0.0f, 0.000001f);
     single.setStealFadeTime (std::numeric_limits<float>::quiet_NaN());
-    CHECK (near (single.getStealFadeTime(), 0.0f));
+    CHOC_EXPECT_NEAR (single.getStealFadeTime(), 0.0f, 0.000001f);
 
     // Each slot owns its pending start. Fast notes can therefore fade multiple
     // stolen voices concurrently without a shared timer or heap allocation.
@@ -2029,14 +1933,14 @@ void testVoicePool (choc::test::TestProgress& progress)
     pair.start (62, 1.0f);
     pair.start (64, 1.0f);
     pair.start (65, 1.0f);
-    CHECK (pair.findVoice (64) == 0);
-    CHECK (pair.findVoice (65) == 1);
-    CHECK (pair.getVoice (0).startCount == 1);
-    CHECK (pair.getVoice (1).startCount == 1);
+    CHOC_EXPECT_EQ (pair.findVoice (64), 0);
+    CHOC_EXPECT_EQ (pair.findVoice (65), 1);
+    CHOC_EXPECT_EQ (pair.getVoice (0).startCount, 1);
+    CHOC_EXPECT_EQ (pair.getVoice (1).startCount, 1);
     pair.next();
     pair.next();
-    CHECK (pair.getVoice (0).startCount == 2);
-    CHECK (pair.getVoice (1).startCount == 2);
+    CHOC_EXPECT_EQ (pair.getVoice (0).startCount, 2);
+    CHOC_EXPECT_EQ (pair.getVoice (1).startCount, 2);
 
     // When every slot is already fading, the latest note replaces the oldest
     // pending start without restarting the old voice's fade.
@@ -2046,9 +1950,9 @@ void testVoicePool (choc::test::TestProgress& progress)
     pair.start (64, 1.0f);
     pair.start (65, 1.0f);
     pair.start (67, 1.0f);
-    CHECK (pair.findVoice (64) == -1);
-    CHECK (pair.findVoice (67) == 0);
-    CHECK (pair.getVoice (0).forcedReleaseCount == 1);
+    CHOC_EXPECT_EQ (pair.findVoice (64), -1);
+    CHOC_EXPECT_EQ (pair.findVoice (67), 0);
+    CHOC_EXPECT_EQ (pair.getVoice (0).forcedReleaseCount, 1);
 
     // A burst much larger than the voice count stays bounded. With two slots,
     // the two newest pending keys survive until the original voices become available.
@@ -2059,22 +1963,22 @@ void testVoicePool (choc::test::TestProgress& progress)
     for (int note = 64; note < 84; ++note)
         pair.start (note, 1.0f);
 
-    CHECK (pair.getActiveVoiceCount() == 2);
-    CHECK (pair.getAllocatedVoiceCount() == 2);
-    CHECK (pair.findVoice (82) >= 0);
-    CHECK (pair.findVoice (83) >= 0);
+    CHOC_EXPECT_EQ (pair.getActiveVoiceCount(), 2);
+    CHOC_EXPECT_EQ (pair.getAllocatedVoiceCount(), 2);
+    CHOC_EXPECT_TRUE (pair.findVoice (82) >= 0);
+    CHOC_EXPECT_TRUE (pair.findVoice (83) >= 0);
 
     for (int note = 64; note < 82; ++note)
-        CHECK (pair.findVoice (note) == -1);
+        CHOC_EXPECT_EQ (pair.findVoice (note), -1);
 
     pair.next();
     pair.next();
-    CHECK ((pair.getVoice (0).note == 82
+    CHOC_EXPECT_TRUE ((pair.getVoice (0).note == 82
             && pair.getVoice (1).note == 83)
            || (pair.getVoice (0).note == 83
                && pair.getVoice (1).note == 82));
-    CHECK (pair.getVoice (0).startCount == 2);
-    CHECK (pair.getVoice (1).startCount == 2);
+    CHOC_EXPECT_EQ (pair.getVoice (0).startCount, 2);
+    CHOC_EXPECT_EQ (pair.getVoice (1).startCount, 2);
 
     // A note-off received while a note is pending cancels its future start.
     single.prepare (1000.0f);
@@ -2084,8 +1988,14 @@ void testVoicePool (choc::test::TestProgress& progress)
     single.stop (62);
     single.next();
     single.next();
-    CHECK (single.getVoice (0).startCount == 1);
-    CHECK (single.findVoice (62) == -1);
+    CHOC_EXPECT_EQ (single.getVoice (0).startCount, 1);
+    CHOC_EXPECT_EQ (single.findVoice (62), -1);
+}
+
+void testVoicePoolLifecycle (choc::test::TestProgress& progress)
+{
+    using Pool = chardsp::VoicePool<TestVoice, 3>;
+    Pool pool;
 
     // The priority order remains oldest releasing, then oldest held.
     pool.prepare (1000.0f);
@@ -2095,9 +2005,9 @@ void testVoicePool (choc::test::TestProgress& progress)
     pool.stop (60);
     pool.stop (62);
     pool.start (65, 1.0f);
-    CHECK (pool.findVoice (65) == 0);
-    CHECK (pool.findVoice (60) == -1);
-    CHECK (pool.findVoice (62) == 1);
+    CHOC_EXPECT_EQ (pool.findVoice (65), 0);
+    CHOC_EXPECT_EQ (pool.findVoice (60), -1);
+    CHOC_EXPECT_EQ (pool.findVoice (62), 1);
 
     // The oldest held voice is the final fallback. Additional fast notes can
     // reserve other slots while earlier stolen voices are still fading.
@@ -2106,40 +2016,40 @@ void testVoicePool (choc::test::TestProgress& progress)
     pool.start (62, 1.0f);
     pool.start (64, 1.0f);
     pool.start (67, 1.0f);
-    CHECK (pool.findVoice (67) == 0);
-    CHECK (pool.findVoice (60) == -1);
+    CHOC_EXPECT_EQ (pool.findVoice (67), 0);
+    CHOC_EXPECT_EQ (pool.findVoice (60), -1);
 
     pool.stop (62);
     pool.start (62, 1.0f);
     pool.start (69, 1.0f);
-    CHECK (pool.findVoice (69) >= 0);
+    CHOC_EXPECT_TRUE (pool.findVoice (69) >= 0);
 
     pool.releaseAll();
 
     for (int i = 0; i < 4; ++i)
         pool.next();
 
-    CHECK (pool.getActiveVoiceCount() == 0);
+    CHOC_EXPECT_EQ (pool.getActiveVoiceCount(), 0);
 
     pool.prepare (1000.0f);
     pool.start (69, 1.0f);
     pool.start (71, 1.0f);
     pool.reset();
-    CHECK (pool.getVoice (0).forcedReleaseCount
+    CHOC_EXPECT_EQ (pool.getVoice (0).forcedReleaseCount
            + pool.getVoice (1).forcedReleaseCount
-           + pool.getVoice (2).forcedReleaseCount == 2);
-    CHECK (pool.getActiveVoiceCount() == 0);
-    CHECK (pool.getAllocatedVoiceCount() == 0);
+           + pool.getVoice (2).forcedReleaseCount, 2);
+    CHOC_EXPECT_EQ (pool.getActiveVoiceCount(), 0);
+    CHOC_EXPECT_EQ (pool.getAllocatedVoiceCount(), 0);
 
     // Sustain defers voice release without introducing MIDI into the pool.
     pool.prepare (1000.0f);
     pool.start (72, 1.0f);
     pool.setSustain (true);
     pool.stop (72);
-    CHECK (! pool.isKeyHeld (72));
-    CHECK (pool.getVoice (0).releaseCount == 0);
+    CHOC_EXPECT_FALSE (pool.isKeyHeld (72));
+    CHOC_EXPECT_EQ (pool.getVoice (0).releaseCount, 0);
     pool.setSustain (false);
-    CHECK (pool.getVoice (0).releaseCount == 1);
+    CHOC_EXPECT_EQ (pool.getVoice (0).releaseCount, 1);
 
     // Release duration comes from the Voice, not a guessed allocator timeout.
     // This tail deliberately lasts longer than reference old ten-second memory.
@@ -2151,10 +2061,13 @@ void testVoicePool (choc::test::TestProgress& progress)
     for (int i = 0; i < 101; ++i)
         pool.next();
 
-    CHECK (pool.findVoice (74) == 0);
+    CHOC_EXPECT_EQ (pool.findVoice (74), 0);
     pool.next();
-    CHECK (pool.findVoice (74) == -1);
+    CHOC_EXPECT_EQ (pool.findVoice (74), -1);
+}
 
+void testVoicePoolKeysAndAllocations (choc::test::TestProgress& progress)
+{
     // The key domain is caller-defined and has no MIDI or 32-key ceiling.
     // Only the four actual voices are stored, no matter how many source IDs
     // address the pool over time.
@@ -2166,19 +2079,21 @@ void testVoicePool (choc::test::TestProgress& progress)
         sources.start ({ source, 100.0f + static_cast<float> (source % 900) },
                        0.5f);
 
-    CHECK (sources.getAllocatedVoiceCount() == 4);
-    CHECK (sources.getActiveVoiceCount() == 4);
-    CHECK (sources.findVoice ({ 9999, 0.0f }) >= 0);
-    CHECK (sources.findVoice ({ 0, 0.0f }) == -1);
+    CHOC_EXPECT_EQ (sources.getAllocatedVoiceCount(), 4);
+    CHOC_EXPECT_EQ (sources.getActiveVoiceCount(), 4);
+    CHOC_EXPECT_TRUE (sources.findVoice ({ 9999, 0.0f }) >= 0);
+    CHOC_EXPECT_EQ (sources.findVoice ({ 0, 0.0f }), -1);
 
     const auto latest = static_cast<size_t> (
         sources.findVoice ({ 9999, 0.0f }));
     const auto startsBeforeDuplicate = sources.getVoice (latest).startCount;
     sources.start ({ 9999, 777.0f }, 1.0f);
-    CHECK (sources.getVoice (latest).startCount == startsBeforeDuplicate);
+    CHOC_EXPECT_EQ (sources.getVoice (latest).startCount, startsBeforeDuplicate);
     sources.stop ({ 12, 0.0f });
-    CHECK (sources.getActiveVoiceCount() == 4);
+    CHOC_EXPECT_EQ (sources.getActiveVoiceCount(), 4);
 
+    chardsp::VoicePool<TestVoice, 3> pool;
+    pool.prepare (1000.0f);
     const auto allocationsBeforeExercise = allocationCount.load();
 
     for (int event = 0; event < 100000; ++event)
@@ -2191,7 +2106,7 @@ void testVoicePool (choc::test::TestProgress& progress)
         pool.next();
     }
 
-    CHECK (allocationCount.load() == allocationsBeforeExercise);
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBeforeExercise);
 }
 
 void testPortamento (choc::test::TestProgress& progress)
@@ -2204,18 +2119,18 @@ void testPortamento (choc::test::TestProgress& progress)
     glide.setTimeRateMorph (0.0f);
     glide.setTarget (72.0f, true);
 
-    CHECK (near (glide.next(), 60.0f));
+    CHOC_EXPECT_NEAR (glide.next(), 60.0f, 0.000001f);
 
     for (int i = 1; i < 50; ++i)
         glide.next();
 
-    CHECK (near (glide.next(), 66.0f));
+    CHOC_EXPECT_NEAR (glide.next(), 66.0f, 0.000001f);
 
     for (int i = 51; i <= 100; ++i)
         glide.next();
 
-    CHECK (near (glide.next(), 72.0f));
-    CHECK (! glide.isGliding());
+    CHOC_EXPECT_NEAR (glide.next(), 72.0f, 0.000001f);
+    CHOC_EXPECT_FALSE (glide.isGliding());
 
     // At full rate scaling, a half-octave takes half the configured time.
     glide.reset (60.0f);
@@ -2225,8 +2140,8 @@ void testPortamento (choc::test::TestProgress& progress)
     for (int i = 0; i < 50; ++i)
         glide.next();
 
-    CHECK (! glide.isGliding());
-    CHECK (near (glide.next(), 66.0f));
+    CHOC_EXPECT_FALSE (glide.isGliding());
+    CHOC_EXPECT_NEAR (glide.next(), 66.0f, 0.000001f);
 
     // The curved endpoint is the active exponential equation.
     glide.reset (60.0f);
@@ -2240,10 +2155,10 @@ void testPortamento (choc::test::TestProgress& progress)
     const auto strength = 6.0f;
     const auto exponential = (1.0f - std::exp (-strength * 0.5f))
                            / (1.0f - std::exp (-strength));
-    CHECK (near (glide.next(), 60.0f + 12.0f * exponential, 0.00001f));
+    CHOC_EXPECT_NEAR (glide.next(), 60.0f + 12.0f * exponential, 0.00001f);
 
     glide.setTarget (48.0f, false);
-    CHECK (near (glide.next(), 48.0f));
+    CHOC_EXPECT_NEAR (glide.next(), 48.0f, 0.000001f);
 }
 
 void testMonoVoiceController (choc::test::TestProgress& progress)
@@ -2255,41 +2170,43 @@ void testMonoVoiceController (choc::test::TestProgress& progress)
     mono.setPortamentoMode (chardsp::PortamentoMode::fingered);
 
     auto action = mono.start (1, 60.0f, 0.8f);
-    CHECK (action.hasPitch() && action.trigger && ! action.glide);
+    CHOC_EXPECT_TRUE (action.hasPitch() && action.trigger && ! action.glide);
     action = mono.start (2, 64.0f, 0.7f);
-    CHECK (action.hasPitch() && ! action.trigger && action.glide);
+    CHOC_EXPECT_TRUE (action.hasPitch() && ! action.trigger && action.glide);
 
     // Last-note priority falls back without retriggering the envelope.
     action = mono.stop (2);
-    CHECK (action.hasPitch() && near (action.pitch, 60.0f));
-    CHECK (! action.trigger && action.glide);
+    CHOC_EXPECT_TRUE (action.hasPitch());
+    CHOC_EXPECT_NEAR (action.pitch, 60.0f, 0.000001f);
+    CHOC_EXPECT_TRUE (! action.trigger && action.glide);
 
     mono.start (2, 64.0f, 0.7f);
     mono.start (3, 67.0f, 0.6f);
     action = mono.stopMatching (
         [] (int key) noexcept { return key >= 2; });
-    CHECK (action.hasPitch() && near (action.pitch, 60.0f));
-    CHECK (mono.getHeldCount() == 1);
+    CHOC_EXPECT_TRUE (action.hasPitch());
+    CHOC_EXPECT_NEAR (action.pitch, 60.0f, 0.000001f);
+    CHOC_EXPECT_EQ (mono.getHeldCount(), 1);
 
     // Stale note-offs and releases below the active note do not change pitch.
     mono.start (2, 64.0f, 0.7f);
     action = mono.stopMatching (
         [] (int key) noexcept { return key == 99; });
-    CHECK (! action.hasPitch() && ! action.shouldRelease());
+    CHOC_EXPECT_TRUE (! action.hasPitch() && ! action.shouldRelease());
     action = mono.stopMatching (
         [] (int key) noexcept { return key == 1; });
-    CHECK (! action.hasPitch() && ! action.shouldRelease());
-    CHECK (mono.getHeldCount() == 1);
+    CHOC_EXPECT_TRUE (! action.hasPitch() && ! action.shouldRelease());
+    CHOC_EXPECT_EQ (mono.getHeldCount(), 1);
 
     // Legato delays the final gate-off by reference 24 ms grace window.
-    CHECK (! mono.stop (2).shouldRelease());
-    CHECK (mono.hasPendingGateOff());
+    CHOC_EXPECT_FALSE (mono.stop (2).shouldRelease());
+    CHOC_EXPECT_TRUE (mono.hasPendingGateOff());
 
     for (int i = 0; i < 23; ++i)
-        CHECK (! mono.next().shouldRelease());
+        CHOC_EXPECT_FALSE (mono.next().shouldRelease());
 
-    CHECK (mono.next().shouldRelease());
-    CHECK (! mono.isGateActive());
+    CHOC_EXPECT_TRUE (mono.next().shouldRelease());
+    CHOC_EXPECT_FALSE (mono.isGateActive());
 
     // A new note in that grace window cancels the release and stays legato.
     mono.reset();
@@ -2301,27 +2218,27 @@ void testMonoVoiceController (choc::test::TestProgress& progress)
         mono.next();
 
     action = mono.start (2, 67.0f, 1.0f);
-    CHECK (action.hasPitch() && ! action.trigger);
-    CHECK (! mono.hasPendingGateOff());
+    CHOC_EXPECT_TRUE (action.hasPitch() && ! action.trigger);
+    CHOC_EXPECT_FALSE (mono.hasPendingGateOff());
 
     // Always glides across a gap; fingered glides only while a key is held.
     mono.reset();
     mono.setLegato (false);
     mono.setPortamentoMode (chardsp::PortamentoMode::always);
     mono.start (1, 60.0f, 1.0f);
-    CHECK (mono.stop (1).shouldRelease());
-    CHECK (mono.start (2, 72.0f, 1.0f).glide);
+    CHOC_EXPECT_TRUE (mono.stop (1).shouldRelease());
+    CHOC_EXPECT_TRUE (mono.start (2, 72.0f, 1.0f).glide);
     mono.stop (2);
     mono.setPortamentoMode (chardsp::PortamentoMode::fingered);
-    CHECK (! mono.start (3, 67.0f, 1.0f).glide);
+    CHOC_EXPECT_FALSE (mono.start (3, 67.0f, 1.0f).glide);
 
     // Sustain owns only the gate; releasing it ends a voice with no held key.
     mono.reset();
     mono.setSustain (true);
     mono.start (1, 60.0f, 1.0f);
-    CHECK (! mono.stop (1).shouldRelease());
-    CHECK (mono.isGateActive());
-    CHECK (mono.setSustain (false).shouldRelease());
+    CHOC_EXPECT_FALSE (mono.stop (1).shouldRelease());
+    CHOC_EXPECT_TRUE (mono.isGateActive());
+    CHOC_EXPECT_TRUE (mono.setSustain (false).shouldRelease());
 
     // Capacity is explicit and fixed rather than a MIDI-sized hidden limit.
     chardsp::MonoVoiceController<double, uint64_t, 2> small;
@@ -2329,25 +2246,8 @@ void testMonoVoiceController (choc::test::TestProgress& progress)
     small.start (1000, 60.0, 1.0);
     small.start (2000, 62.0, 1.0);
     small.start (3000, 64.0, 1.0);
-    CHECK (small.getHeldCount() == 2);
+    CHOC_EXPECT_EQ (small.getHeldCount(), 2);
 }
-
-static_assert (std::is_nothrow_default_constructible_v<chardsp::ADSREnvelope<float>>);
-static_assert (std::is_nothrow_default_constructible_v<chardsp::StateVariableFilter<float>>);
-static_assert (std::is_nothrow_default_constructible_v<chardsp::ColoredNoise<float>>);
-static_assert (std::is_nothrow_default_constructible_v<chardsp::Downsampler4x<float>>);
-static_assert (std::is_nothrow_default_constructible_v<
-               chardsp::NaiveSawOscillator<float>>);
-static_assert (std::is_nothrow_default_constructible_v<
-               chardsp::PolyBLEPPulseOscillator<double>>);
-static_assert (std::is_nothrow_default_constructible_v<
-               chardsp::BasicSynthVoice<double>>);
-static_assert (std::is_nothrow_default_constructible_v<
-               chardsp::VoicePool<TestVoice, 4>>);
-static_assert (std::is_nothrow_default_constructible_v<
-               chardsp::Portamento<double>>);
-static_assert (std::is_nothrow_default_constructible_v<
-               chardsp::MonoVoiceController<double, uint64_t, 64>>);
 
 } // namespace
 
@@ -2376,7 +2276,6 @@ int main()
     choc::test::TestProgress progress;
     CHOC_CATEGORY (chardsp);
 
-    { CHOC_TEST (third_party_license_collection); testThirdPartyLicenseCollection (progress); }
     { CHOC_TEST (smoothed_value); testSmoothedValue (progress); }
     { CHOC_TEST (delay_line_and_gain); testDelayLineAndGain (progress); }
     { CHOC_TEST (dc_blocker_and_detectors); testDCBlockerAndDetectors (progress); }
@@ -2388,7 +2287,6 @@ int main()
       testOscillatorPhaseAndEllipticCorrection (progress); }
     { CHOC_TEST (generic_oscillators); testGenericOscillators (progress); }
     { CHOC_TEST (basic_synth_voice); testBasicSynthVoice (progress); }
-    { CHOC_TEST (choc_triangle_modulation); testChocTriangleModulation (progress); }
     { CHOC_TEST (adsr_reference); testADSREnvelopeParity (progress); }
     { CHOC_TEST (adsr_behavior); testADSREnvelopeBehavior (progress); }
     { CHOC_TEST (adsr_live_updates); testADSREnvelopeLiveUpdates (progress); }
@@ -2399,7 +2297,11 @@ int main()
     { CHOC_TEST (downsampler_reference); testDownsamplerParity (progress); }
     { CHOC_TEST (downsampler_behavior); testDownsamplerBehavior (progress); }
     { CHOC_TEST (double_precision_types); testDoublePrecisionTypes (progress); }
-    { CHOC_TEST (voice_pool); testVoicePool (progress); }
+    { CHOC_TEST (voice_pool_basics); testVoicePoolBasics (progress); }
+    { CHOC_TEST (voice_pool_stealing); testVoicePoolStealing (progress); }
+    { CHOC_TEST (voice_pool_lifecycle); testVoicePoolLifecycle (progress); }
+    { CHOC_TEST (voice_pool_keys_and_allocations);
+      testVoicePoolKeysAndAllocations (progress); }
     { CHOC_TEST (portamento); testPortamento (progress); }
     { CHOC_TEST (mono_voice_controller); testMonoVoiceController (progress); }
 

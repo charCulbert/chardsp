@@ -1,79 +1,94 @@
+#include "../common/DemoHost.h"
+
 #include <algorithm>
-#include <array>
-#include <filesystem>
-#include <iostream>
-#include <string_view>
+#include <atomic>
 
 #include "chardsp/chardsp_Oscillator.h"
 #include "chardsp/chardsp_StateVariableFilter.h"
-#include "choc/audio/choc_AudioFileFormat_WAV.h"
-#include "choc/audio/choc_SampleBuffers.h"
 
-int main (int argc, const char* const* argv)
+namespace
 {
-    constexpr float sampleRate = 48000.0f;
-    constexpr uint32_t segmentFrames = 48000;
-    constexpr uint32_t fadeFrames = 240;
-    constexpr std::array modes {
-        chardsp::FilterMode::lowpass,
-        chardsp::FilterMode::bandpass,
-        chardsp::FilterMode::highpass
-    };
-    constexpr std::array<std::string_view, 3> labels {
-        "lowpass", "bandpass", "highpass"
-    };
-    const std::filesystem::path path = argc > 1
-        ? argv[1] : "chardsp_filter.wav";
-
-    chardsp::EllipticSawOscillator<float> oscillator;
-    oscillator.prepare (sampleRate);
-    oscillator.setFrequency (110.0f);
-    chardsp::StateVariableFilter<float> filter;
-    filter.prepare (sampleRate);
-    filter.setCutoffAndQ (1200.0f, 1.2f);
-
-    choc::buffer::ChannelArrayBuffer<float> buffer (
-        2, segmentFrames * static_cast<uint32_t> (modes.size()));
-    auto output = buffer.getView();
-
-    for (uint32_t segment = 0; segment < modes.size(); ++segment)
+class FilterDemo final : public chardsp::examples::Demo
+{
+public:
+    std::string_view getName () const noexcept override
     {
-        oscillator.reset();
-        filter.reset();
-        filter.setMode (modes[segment]);
-
-        for (uint32_t frame = 0; frame < segmentFrames; ++frame)
+        return "State-variable filter";
+    }
+    std::string_view getPageConfig () const noexcept override
+    {
+        return R"JS({title:"State-variable filter",description:"Compare direct, lowpass, bandpass, highpass, and notch outputs.",controls:[{name:"frequency",label:"Saw frequency",min:40,max:2000,step:1,value:110,unit:" Hz"},{name:"cutoff",label:"Cutoff",min:20,max:20000,step:10,value:1200,unit:" Hz",section:"Filter"},{name:"q",label:"Resonance (Q)",min:.1,max:10,step:.1,value:1.2,precision:1}],actions:[{label:"Bypass",action:"mode",value:0,group:"mode",groupLabel:"Output"},{label:"Lowpass",action:"mode",value:1,group:"mode",selected:true},{label:"Bandpass",action:"mode",value:2,group:"mode"},{label:"Highpass",action:"mode",value:3,group:"mode"},{label:"Notch",action:"mode",value:4,group:"mode"},{label:"Off",action:"enabled",value:0,group:"enabled",groupLabel:"Tone"},{label:"On",action:"enabled",value:1,group:"enabled",selected:true}]})JS";
+    }
+    void sampleRateChanged (double rate) override
+    {
+        oscillator.prepare (static_cast<float> (rate));
+        oscillator.setFrequency (110);
+        filter.prepare (static_cast<float> (rate));
+        filter.setMode (chardsp::FilterMode::lowpass);
+    }
+    void setControl (std::string_view name, float value) noexcept override
+    {
+        if (name == "frequency")
+            frequency.store (std::clamp (value, 40.0f, 2000.0f));
+        else if (name == "cutoff")
+            cutoff.store (std::clamp (value, 20.0f, 20000.0f));
+        else if (name == "q")
+            q.store (std::clamp (value, .1f, 10.0f));
+    }
+    bool performAction (std::string_view name, int value) noexcept override
+    {
+        if (name == "mode")
+            return actions.push ({0, value});
+        if (name == "enabled")
+            return actions.push ({1, value});
+        return false;
+    }
+    void processSubBlock (const choc::audio::AudioMIDIBlockDispatcher::Block &block,
+                          bool replaceOutput) override
+    {
+        Action action{};
+        while (actions.pop (action))
         {
-            const auto fadeIn = std::min (1.0f,
-                static_cast<float> (frame) / static_cast<float> (fadeFrames));
-            const auto fadeOut = std::min (1.0f,
-                static_cast<float> (segmentFrames - 1 - frame)
-                    / static_cast<float> (fadeFrames));
-            const auto sample = filter.process (oscillator.next()) * 0.2f
-                              * std::min (fadeIn, fadeOut);
-            const auto destination = segment * segmentFrames + frame;
-
-            for (uint32_t channel = 0; channel < output.getNumChannels(); ++channel)
-                output.getSample (channel, destination) = sample;
+            if (action.type == 1)
+                enabled = action.value != 0;
+            else
+            {
+                output = std::clamp (action.value, 0, 4);
+                filter.reset ();
+                if (output > 0 && output < 4)
+                    filter.setMode (static_cast<chardsp::FilterMode> (output - 1));
+            }
         }
+        oscillator.setFrequency (frequency.load ());
+        filter.setCutoffAndQ (cutoff.load (), q.load ());
+        chardsp::examples::renderMono (block, replaceOutput, [this] {
+            if (!enabled)
+                return 0.0f;
+            const auto input = oscillator.next ();
+            if (output == 0)
+                return input * .2f;
+            if (output == 4)
+                return filter.processAll (input).notch * .2f;
+            return filter.process (input) * .2f;
+        });
     }
 
-    choc::audio::WAVAudioFileFormat<true> format;
-    choc::audio::AudioFileProperties properties;
-    properties.sampleRate = sampleRate;
-    properties.numFrames = buffer.getNumFrames();
-    properties.numChannels = 2;
-    properties.bitDepth = choc::audio::BitDepth::int16;
-    auto writer = format.createWriter (path, properties);
-
-    if (writer == nullptr || ! writer->appendFrames (buffer.getView())
-        || ! writer->flush())
+private:
+    struct Action
     {
-        std::cerr << "Failed to write " << path << '\n';
-        return 1;
-    }
-
-    std::cout << "Wrote " << path << "\nSegments:\n";
-    for (size_t i = 0; i < labels.size(); ++i)
-        std::cout << "  " << i + 1 << ". " << labels[i] << '\n';
+        int type;
+        int value;
+    };
+    chardsp::examples::ActionQueue<Action> actions;
+    std::atomic<float> frequency{110}, cutoff{1200}, q{1.2f};
+    bool enabled = true;
+    int output = 1;
+    chardsp::EllipticSawOscillator<float> oscillator;
+    chardsp::StateVariableFilter<float> filter;
+};
+} // namespace
+int main ()
+{
+    FilterDemo demo;
+    return chardsp::examples::runDemo (demo);
 }

@@ -227,18 +227,14 @@ and per-sample methods are `noexcept`.
 cmake -S . -B build -DCHARDSP_BUILD_TESTS=ON -DCHARDSP_BUILD_EXAMPLES=ON
 cmake --build build
 ./build/tests/chardsp_tests
-./build/examples/bufferRender/chardsp_buffer_render chardsp_render.wav
+./build/examples/chardsp_adsr
 ```
 
-See [the example catalog](examples/README.md) for small, one-file programs that
+See [the example catalog](examples/README.md) for interactive programs that
 demonstrate each oscillator family, ADSR behavior, every filter and noise mode,
 fixed feedback delay, complete oversampling, explicit specialized 4x
 downsampling, voice stealing, mono portamento, and a polyphonic basic synth.
-
-`bufferRender` remains the focused two-second elliptic-BLEP saw example. It
-applies explicit fade-in and fade-out smoothing, and uses CHOC's WAV writer to
-create a 48 kHz, 16-bit stereo file. The output path is optional and defaults
-to `chardsp_render.wav`.
+The examples share only their CHOC audio, MIDI, window, and WebView host.
 
 The test executable uses CHOC's unit-test framework and includes reference
 vectors, float/double instantiation, filter/detector response checks, delay and

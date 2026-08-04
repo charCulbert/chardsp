@@ -1,2 +1,0 @@
-add_executable(chardsp_mono_portamento monoPortamento_Main.cpp)
-target_link_libraries(chardsp_mono_portamento PRIVATE chardsp)

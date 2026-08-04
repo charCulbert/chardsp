@@ -1,2 +1,0 @@
-add_executable(chardsp_oversampler oversampler_Main.cpp)
-target_link_libraries(chardsp_oversampler PRIVATE chardsp)

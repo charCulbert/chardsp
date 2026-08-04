@@ -1,2 +1,0 @@
-add_executable(chardsp_delay_line delayLine_Main.cpp)
-target_link_libraries(chardsp_delay_line PRIVATE chardsp)

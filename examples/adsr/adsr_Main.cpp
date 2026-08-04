@@ -1,67 +1,94 @@
+#include "../common/DemoHost.h"
+
 #include <algorithm>
-#include <cmath>
-#include <cstdlib>
-#include <filesystem>
-#include <iostream>
+#include <atomic>
 
 #include "chardsp/chardsp_ADSREnvelope.h"
 #include "chardsp/chardsp_Oscillator.h"
-#include "choc/audio/choc_AudioFileFormat_WAV.h"
-#include "choc/audio/choc_SampleBuffers.h"
 
-int main (int argc, const char* const* argv)
+namespace
 {
-    constexpr float sampleRate = 48000.0f;
-    constexpr uint32_t frames = 2 * 48000;
-    const std::filesystem::path path = argc > 1
-        ? argv[1] : "chardsp_adsr.wav";
-    const auto velocity = argc > 2
-        ? std::clamp (std::strtof (argv[2], nullptr), 0.0f, 1.0f) : 0.7f;
+class ADSRDemo final : public chardsp::examples::Demo
+{
+public:
+    std::string_view getName () const noexcept override
+    {
+        return "ADSR envelope";
+    }
+    std::string_view getPageConfig () const noexcept override
+    {
+        return R"JS({title:"ADSR envelope",description:"Trigger starts from zero, retrigger starts from the current level, and release follows the selected curve.",controls:[{name:"frequency",label:"Sine frequency",min:40,max:2000,step:1,value:220,unit:" Hz"},{name:"attack",label:"Attack",min:0,max:2,step:.01,value:.15,unit:" s",precision:2,section:"Envelope"},{name:"decay",label:"Decay",min:0,max:2,step:.01,value:.25,unit:" s",precision:2},{name:"sustain",label:"Sustain level",min:0,max:1,step:.01,value:.45,precision:2},{name:"release",label:"Release",min:0,max:3,step:.01,value:.55,unit:" s",precision:2}],actions:[{label:"Trigger note",action:"trigger"},{label:"Retrigger current level",action:"retrigger"},{label:"Release note",action:"release"},{label:"Exponential",action:"shape",value:0,group:"shape",groupLabel:"Curve",selected:true},{label:"Linear",action:"shape",value:1,group:"shape"}]})JS";
+    }
+    void sampleRateChanged (double rate) override
+    {
+        oscillator.prepare (static_cast<float> (rate));
+        oscillator.setFrequency (220.0f);
+        envelope.prepare (static_cast<float> (rate));
+        envelope.setShape (chardsp::EnvelopeShape::exponential);
+    }
+    void setControl (std::string_view name, float value) noexcept override
+    {
+        if (name == "frequency")
+            frequency.store (std::clamp (value, 40.0f, 2000.0f));
+        else if (name == "attack")
+            attack.store (std::clamp (value, 0.0f, 2.0f));
+        else if (name == "decay")
+            decay.store (std::clamp (value, 0.0f, 2.0f));
+        else if (name == "sustain")
+            sustain.store (std::clamp (value, 0.0f, 1.0f));
+        else if (name == "release")
+            release.store (std::clamp (value, 0.0f, 3.0f));
+    }
+    bool performAction (std::string_view name, int value) noexcept override
+    {
+        if (name == "trigger")
+            return actions.push ({0, 0});
+        if (name == "retrigger")
+            return actions.push ({1, 0});
+        if (name == "release")
+            return actions.push ({2, 0});
+        if (name == "shape")
+            return actions.push ({3, value});
+        return false;
+    }
+    void processSubBlock (const choc::audio::AudioMIDIBlockDispatcher::Block &block,
+                          bool replaceOutput) override
+    {
+        Action action{};
+        while (actions.pop (action))
+            if (action.type == 0)
+                envelope.trigger ();
+            else if (action.type == 1)
+                envelope.retrigger ();
+            else if (action.type == 2)
+                envelope.release ();
+            else
+                envelope.setShape (action.value == 0 ? chardsp::EnvelopeShape::exponential
+                                                     : chardsp::EnvelopeShape::linear);
+        oscillator.setFrequency (frequency.load ());
+        envelope.setAttack (attack.load ());
+        envelope.setDecay (decay.load ());
+        envelope.setSustain (sustain.load ());
+        envelope.setRelease (release.load ());
+        chardsp::examples::renderMono (
+            block, replaceOutput, [this] { return oscillator.next () * envelope.next () * 0.25f; });
+    }
 
+private:
+    struct Action
+    {
+        int type;
+        int value;
+    };
+    chardsp::examples::ActionQueue<Action> actions;
+    std::atomic<float> frequency{220.0f}, attack{0.15f}, decay{0.25f}, sustain{0.45f},
+        release{0.55f};
     chardsp::SineOscillator<float> oscillator;
-    oscillator.prepare (sampleRate);
-    oscillator.setFrequency (220.0f);
-
     chardsp::ADSREnvelope<float> envelope;
-    envelope.prepare (sampleRate);
-    envelope.setShape (chardsp::EnvelopeShape::exponential);
-    envelope.setAttack (0.15f);
-    envelope.setDecay (0.25f);
-    envelope.setSustain (0.45f);
-    envelope.setRelease (0.55f);
-    envelope.trigger();
-
-    choc::buffer::ChannelArrayBuffer<float> buffer (2, frames);
-    auto output = buffer.getView();
-
-    for (uint32_t frame = 0; frame < frames; ++frame)
-    {
-        if (frame == 48000)
-            envelope.release();
-
-        // ADSR remains normalized. Velocity scales its output level in the
-        // voice, exactly as a velocity-scaled envelope/VCA patch would.
-        const auto envelopeLevel = velocity * envelope.next();
-        const auto sample = 0.25f * oscillator.next() * envelopeLevel;
-
-        for (uint32_t channel = 0; channel < output.getNumChannels(); ++channel)
-            output.getSample (channel, frame) = sample;
-    }
-
-    choc::audio::WAVAudioFileFormat<true> format;
-    choc::audio::AudioFileProperties properties;
-    properties.sampleRate = sampleRate;
-    properties.numFrames = frames;
-    properties.numChannels = 2;
-    properties.bitDepth = choc::audio::BitDepth::int16;
-    auto writer = format.createWriter (path, properties);
-
-    if (writer == nullptr || ! writer->appendFrames (buffer.getView())
-        || ! writer->flush())
-    {
-        std::cerr << "Failed to write " << path << '\n';
-        return 1;
-    }
-
-    std::cout << "Wrote " << path << " with velocity " << velocity << '\n';
+};
+} // namespace
+int main ()
+{
+    ADSRDemo demo;
+    return chardsp::examples::runDemo (demo);
 }

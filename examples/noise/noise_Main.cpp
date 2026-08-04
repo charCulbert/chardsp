@@ -1,72 +1,76 @@
+#include "../common/DemoHost.h"
+
 #include <algorithm>
-#include <array>
-#include <filesystem>
-#include <iostream>
-#include <string_view>
+#include <atomic>
 
 #include "chardsp/chardsp_ColoredNoise.h"
-#include "choc/audio/choc_AudioFileFormat_WAV.h"
-#include "choc/audio/choc_SampleBuffers.h"
 
-int main (int argc, const char* const* argv)
+namespace
 {
-    constexpr float sampleRate = 48000.0f;
-    constexpr uint32_t segmentFrames = 36000;
-    constexpr uint32_t fadeFrames = 240;
-    constexpr std::array colors {
-        chardsp::NoiseColor::brown,
-        chardsp::NoiseColor::pink,
-        chardsp::NoiseColor::white,
-        chardsp::NoiseColor::blue
-    };
-    constexpr std::array<std::string_view, 4> labels {
-        "brown", "pink", "white", "blue"
-    };
-    const std::filesystem::path path = argc > 1
-        ? argv[1] : "chardsp_noise.wav";
-
-    chardsp::ColoredNoise<float> noise;
-    noise.reset (0x12345678u);
-    choc::buffer::ChannelArrayBuffer<float> buffer (
-        2, segmentFrames * static_cast<uint32_t> (colors.size()));
-    auto output = buffer.getView();
-
-    for (uint32_t segment = 0; segment < colors.size(); ++segment)
+class NoiseDemo final : public chardsp::examples::Demo
+{
+public:
+    std::string_view getName () const noexcept override
     {
-        noise.setColor (colors[segment]);
-
-        for (uint32_t frame = 0; frame < segmentFrames; ++frame)
+        return "Colored noise";
+    }
+    std::string_view getPageConfig () const noexcept override
+    {
+        return R"JS({title:"Colored noise",description:"Switch between brown, pink, white, and blue noise from one generator.",controls:[{name:"level",label:"Output level",min:0,max:.3,step:.01,value:.12,precision:2}],actions:[{label:"Brown",action:"color",value:0,group:"color",groupLabel:"Colour",selected:true},{label:"Pink",action:"color",value:1,group:"color"},{label:"White",action:"color",value:2,group:"color"},{label:"Blue",action:"color",value:3,group:"color"},{label:"Reset same seed",action:"reset"},{label:"Off",action:"enabled",value:0,group:"enabled",groupLabel:"Output"},{label:"On",action:"enabled",value:1,group:"enabled",selected:true}]})JS";
+    }
+    void sampleRateChanged (double) override
+    {
+        noise.reset (seed);
+        noise.setColor (chardsp::NoiseColor::brown);
+    }
+    void setControl (std::string_view name, float value) noexcept override
+    {
+        if (name == "level")
+            level.store (std::clamp (value, 0.0f, 0.3f));
+    }
+    bool performAction (std::string_view name, int value) noexcept override
+    {
+        if (name == "color")
+            return actions.push ({0, value});
+        if (name == "enabled")
+            return actions.push ({1, value});
+        if (name == "reset")
+            return actions.push ({2, 0});
+        return false;
+    }
+    void processSubBlock (const choc::audio::AudioMIDIBlockDispatcher::Block &block,
+                          bool replaceOutput) override
+    {
+        Action action{};
+        while (actions.pop (action))
         {
-            const auto fadeIn = std::min (1.0f,
-                static_cast<float> (frame) / static_cast<float> (fadeFrames));
-            const auto fadeOut = std::min (1.0f,
-                static_cast<float> (segmentFrames - 1 - frame)
-                    / static_cast<float> (fadeFrames));
-            const auto sample = noise.next() * 0.12f
-                              * std::min (fadeIn, fadeOut);
-            const auto destination = segment * segmentFrames + frame;
-
-            for (uint32_t channel = 0; channel < output.getNumChannels(); ++channel)
-                output.getSample (channel, destination) = sample;
+            if (action.type == 0)
+                noise.setColor (static_cast<chardsp::NoiseColor> (std::clamp (action.value, 0, 3)));
+            else if (action.type == 1)
+                enabled = action.value != 0;
+            else
+                noise.reset (seed);
         }
+        chardsp::examples::renderMono (block, replaceOutput, [this] {
+            return enabled ? noise.next () * level.load () : 0.0f;
+        });
     }
 
-    choc::audio::WAVAudioFileFormat<true> format;
-    choc::audio::AudioFileProperties properties;
-    properties.sampleRate = sampleRate;
-    properties.numFrames = buffer.getNumFrames();
-    properties.numChannels = 2;
-    properties.bitDepth = choc::audio::BitDepth::int16;
-    auto writer = format.createWriter (path, properties);
-
-    if (writer == nullptr || ! writer->appendFrames (buffer.getView())
-        || ! writer->flush())
+private:
+    static constexpr uint32_t seed = 0x12345678u;
+    struct Action
     {
-        std::cerr << "Failed to write " << path << '\n';
-        return 1;
-    }
-
-    std::cout << "Wrote " << path << "\nSegments:\n";
-    for (size_t i = 0; i < labels.size(); ++i)
-        std::cout << "  " << i + 1 << ". " << labels[i] << '\n';
+        int type;
+        int value;
+    };
+    chardsp::examples::ActionQueue<Action> actions;
+    std::atomic<float> level{.12f};
+    bool enabled = true;
+    chardsp::ColoredNoise<float> noise;
+};
+} // namespace
+int main ()
+{
+    NoiseDemo demo;
+    return chardsp::examples::runDemo (demo);
 }

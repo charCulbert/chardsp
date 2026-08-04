@@ -1,138 +1,149 @@
-#include <filesystem>
-#include <iostream>
+#include "../common/DemoHost.h"
+
 #include <algorithm>
-#include <cmath>
+#include <atomic>
 
-#include "chardsp/chardsp_ADSREnvelope.h"
+#include "chardsp/chardsp_BasicSynthVoice.h"
 #include "chardsp/chardsp_MonoVoiceController.h"
-#include "chardsp/chardsp_Oscillator.h"
 #include "chardsp/chardsp_Portamento.h"
-#include "choc/audio/choc_AudioFileFormat_WAV.h"
-#include "choc/audio/choc_SampleBuffers.h"
 
-int main (int argc, const char* const* argv)
+namespace
 {
-    constexpr float sampleRate = 48000.0f;
-    constexpr uint32_t frames = 72000;
-    using Controller = chardsp::MonoVoiceController<float, int, 16>;
-    const std::filesystem::path path = argc > 1
-        ? argv[1] : "chardsp_mono_portamento.wav";
-
-    Controller controller;
-    controller.prepare (sampleRate);
-    controller.setLegato (true);
-    controller.setPortamentoMode (chardsp::PortamentoMode::fingered);
-
-    chardsp::Portamento<float> portamento;
-    portamento.prepare (sampleRate);
-    portamento.reset (60.0f);
-    portamento.setTime (0.12f);
-    portamento.setShape (0.5f);
-    portamento.setTimeRateMorph (0.0f);
-
-    struct SineVoice
+class MonoPortamentoDemo final : public chardsp::examples::Demo
+{
+public:
+    std::string_view getName () const noexcept override
     {
-        void prepare (float newSampleRate) noexcept
-        {
-            oscillator.prepare (newSampleRate);
-            oscillator.reset();
-            envelope.prepare (newSampleRate);
-            envelope.setAttack (0.01f);
-            envelope.setDecay (0.1f);
-            envelope.setSustain (0.7f);
-            envelope.setRelease (0.3f);
-        }
-
-        void start (float pitch, float nextVelocity) noexcept
-        {
-            setPitch (pitch);
-            oscillator.reset();
-            velocity = std::clamp (nextVelocity, 0.0f, 1.0f);
-            envelope.trigger();
-        }
-
-        void setPitch (float pitch) noexcept
-        {
-            oscillator.setFrequency (440.0f * std::exp2 ((pitch - 69.0f) / 12.0f));
-        }
-
-        void setVelocity (float nextVelocity) noexcept
-        {
-            velocity = std::clamp (nextVelocity, 0.0f, 1.0f);
-        }
-
-        void release() noexcept { envelope.release(); }
-
-        float next() noexcept
-        {
-            return envelope.isActive() ? oscillator.next() * envelope.next() * velocity
-                                       : 0.0f;
-        }
-
-        chardsp::SineOscillator<float> oscillator;
-        chardsp::ADSREnvelope<float> envelope;
-        float velocity = 0.0f;
-    } voice;
-    voice.prepare (sampleRate);
-
-    const auto apply = [&] (const Controller::Action& action)
+        return "Mono portamento";
+    }
+    std::string_view getPageConfig () const noexcept override
     {
-        if (action.hasPitch())
+        return R"JS({title:"Mono portamento",description:"Hold overlapping notes to test legato retriggering, glide modes, newest-note priority, release fallback, sustain, and note-off grace time.",controls:[{name:"portamento",label:"Base glide time",min:0,max:1,step:.01,value:.18,unit:" s",precision:2,section:"Portamento"},{name:"shape",label:"Curve (linear–exponential)",min:0,max:1,step:.01,value:.5,precision:2},{name:"timeRate",label:"Time scaling (constant time–constant rate)",min:0,max:1,step:.01,value:.5,precision:2},{name:"grace",label:"Note-off grace time",min:0,max:.25,step:.001,value:.024,unit:" ms",multiplier:1000,section:"Note policy"},{name:"release",label:"Voice release time",min:0,max:3,step:.01,value:.35,unit:" s",precision:2,section:"Voice"},{name:"velocity",label:"Note-on velocity",min:0,max:1,step:.01,value:.8,precision:2}],actions:[{label:"On",action:"legato",value:1,group:"legato",groupLabel:"Legato",selected:true},{label:"Off",action:"legato",value:0,group:"legato"},{label:"Off",action:"mode",value:0,group:"mode",groupLabel:"Portamento"},{label:"Always",action:"mode",value:1,group:"mode",selected:true},{label:"Fingered",action:"mode",value:2,group:"mode"},{label:"Off",action:"sustain",value:0,group:"sustain",groupLabel:"Sustain",selected:true},{label:"On",action:"sustain",value:1,group:"sustain"},{label:"Release all notes",action:"releaseAll",clearNotes:true}],notes:{on:"noteOn",off:"noteOff",root:60,count:25}})JS";
+    }
+    void sampleRateChanged (double rate) override
+    {
+        sampleRate = static_cast<float> (rate);
+        voice.prepare (sampleRate, 0);
+        voice.setOscillator1Level (0);
+        voice.setOscillator2Waveform (chardsp::BasicSynthWaveform::sine);
+        voice.setOscillator2Level (1);
+        voice.setNoiseLevel (0);
+        voice.setAttack (.01f);
+        voice.setRelease (.35f);
+        voice.setFilter (chardsp::FilterMode::lowpass, sampleRate * .48f, .707f);
+        controller.prepare (sampleRate);
+        controller.setLegato (true);
+        controller.setPortamentoMode (chardsp::PortamentoMode::always);
+        portamento.prepare (sampleRate);
+        portamento.reset (57);
+    }
+    void setControl (std::string_view name, float value) noexcept override
+    {
+        if (name == "portamento")
+            time.store (std::clamp (value, 0.0f, 1.0f));
+        else if (name == "shape")
+            shape.store (std::clamp (value, 0.0f, 1.0f));
+        else if (name == "timeRate")
+            timeRate.store (std::clamp (value, 0.0f, 1.0f));
+        else if (name == "grace")
+            grace.store (std::clamp (value, 0.0f, .25f));
+        else if (name == "release")
+            release.store (std::clamp (value, 0.0f, 3.0f));
+        else if (name == "velocity")
+            velocity.store (std::clamp (value, 0.0f, 1.0f));
+    }
+    bool performAction (std::string_view name, int value) noexcept override
+    {
+        if (name == "noteOn")
+            return actions.push ({0, value});
+        if (name == "noteOff")
+            return actions.push ({1, value});
+        if (name == "legato")
+            return actions.push ({2, value});
+        if (name == "mode")
+            return actions.push ({3, value});
+        if (name == "sustain")
+            return actions.push ({4, value});
+        if (name == "releaseAll")
+            return actions.push ({5, 0});
+        return false;
+    }
+    void processSubBlock (const choc::audio::AudioMIDIBlockDispatcher::Block &block,
+                          bool replaceOutput) override
+    {
+        for (const auto &midi : block.midiMessages)
+        {
+            const auto message = midi.message;
+            if (message.length () < 3)
+                continue;
+            if (message.isNoteOn ())
+                apply (controller.start (static_cast<int> (message.getNoteNumber ()),
+                                         static_cast<float> (message.getNoteNumber ()),
+                                         static_cast<float> (message.getVelocity ()) / 127.0f));
+            else if (message.isNoteOff ())
+                apply (controller.stop (static_cast<int> (message.getNoteNumber ())));
+            else if (message.isAllNotesOff ())
+                apply (controller.allKeysOff ());
+        }
+        portamento.setTime (time.load ());
+        portamento.setShape (shape.load ());
+        portamento.setTimeRateMorph (timeRate.load ());
+        controller.setLegatoGraceTime (grace.load ());
+        voice.setRelease (release.load ());
+        Action action{};
+        while (actions.pop (action))
+        {
+            if (action.type == 0)
+                apply (controller.start (action.value, static_cast<float> (action.value),
+                                         velocity.load ()));
+            else if (action.type == 1)
+                apply (controller.stop (action.value));
+            else if (action.type == 2)
+                controller.setLegato (action.value != 0);
+            else if (action.type == 3)
+                controller.setPortamentoMode (
+                    static_cast<chardsp::PortamentoMode> (std::clamp (action.value, 0, 2)));
+            else if (action.type == 4)
+                apply (controller.setSustain (action.value != 0));
+            else
+                apply (controller.allKeysOff ());
+        }
+        chardsp::examples::renderMono (block, replaceOutput, [this] {
+            apply (controller.next ());
+            voice.setPitch (portamento.next ());
+            return voice.next () * .18f;
+        });
+    }
+
+private:
+    using Controller = chardsp::MonoVoiceController<float, int, 4>;
+    struct Action
+    {
+        int type;
+        int value;
+    };
+    void apply (const Controller::Action &action)
+    {
+        if (action.hasPitch ())
         {
             portamento.setTarget (action.pitch, action.glide);
-
             if (action.trigger)
                 voice.start (action.pitch, action.velocity);
-            else
-                voice.setVelocity (action.velocity);
         }
-        else if (action.shouldRelease())
-        {
-            voice.release();
-        }
-    };
-
-    choc::buffer::ChannelArrayBuffer<float> buffer (2, frames);
-    auto output = buffer.getView();
-
-    for (uint32_t frame = 0; frame < frames; ++frame)
-    {
-        if (frame == 0)
-            apply (controller.start (60, 60.0f, 0.8f));
-        else if (frame == 12000)
-            apply (controller.start (67, 67.0f, 0.9f));
-        else if (frame == 24000)
-            apply (controller.start (64, 64.0f, 0.7f));
-        else if (frame == 32000)
-            apply (controller.stop (64));
-        else if (frame == 38000)
-            apply (controller.stop (67));
-        else if (frame == 48000)
-            apply (controller.stop (60));
-
-        apply (controller.next());
-        voice.setPitch (portamento.next());
-        const auto sample = voice.next() * 0.22f;
-
-        for (uint32_t channel = 0; channel < output.getNumChannels(); ++channel)
-            output.getSample (channel, frame) = sample;
+        else if (action.shouldRelease ())
+            voice.release ();
     }
-
-    choc::audio::WAVAudioFileFormat<true> format;
-    choc::audio::AudioFileProperties properties;
-    properties.sampleRate = sampleRate;
-    properties.numFrames = frames;
-    properties.numChannels = 2;
-    properties.bitDepth = choc::audio::BitDepth::int16;
-    auto writer = format.createWriter (path, properties);
-
-    if (writer == nullptr || ! writer->appendFrames (buffer.getView())
-        || ! writer->flush())
-    {
-        std::cerr << "Failed to write " << path << '\n';
-        return 1;
-    }
-
-    std::cout << "Wrote " << path
-              << " with fingered legato and last-note fallback\n";
+    chardsp::examples::ActionQueue<Action> actions;
+    std::atomic<float> time{.18f}, shape{.5f}, timeRate{.5f}, grace{.024f}, release{.35f},
+        velocity{.8f};
+    float sampleRate = 48000;
+    Controller controller;
+    chardsp::Portamento<float> portamento;
+    chardsp::BasicSynthVoice<float> voice;
+};
+} // namespace
+int main ()
+{
+    MonoPortamentoDemo demo;
+    return chardsp::examples::runDemo (demo);
 }

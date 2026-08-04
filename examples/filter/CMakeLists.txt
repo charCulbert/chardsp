@@ -1,2 +1,0 @@
-add_executable(chardsp_filter filter_Main.cpp)
-target_link_libraries(chardsp_filter PRIVATE chardsp)
