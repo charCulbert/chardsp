@@ -83,7 +83,7 @@ public:
             else if (message.isNoteOff ())
                 apply (controller.stop (static_cast<int> (message.getNoteNumber ())));
             else if (message.isAllNotesOff ())
-                apply (controller.allKeysOff ());
+                apply (controller.releaseAll ());
         }
         portamento.setTime (time.load ());
         portamento.setShape (shape.load ());
@@ -106,7 +106,7 @@ public:
             else if (action.type == 4)
                 apply (controller.setSustain (action.value != 0));
             else
-                apply (controller.allKeysOff ());
+                apply (controller.releaseAll ());
         }
         chardsp::examples::renderMono (block, replaceOutput, [this] {
             apply (controller.next ());

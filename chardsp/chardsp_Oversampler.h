@@ -1,13 +1,10 @@
 #pragma once
 
-#include "chardsp/chardsp_OpenSourceLicenses.h"
-
 #include <cstdint>
 #include <limits>
 #include <type_traits>
 #include <vector>
 
-#include "chardsp/detail/chardsp_SignalsmithDSPLicense.h"
 #include "choc/audio/choc_SampleBuffers.h"
 #include "choc/platform/choc_Assert.h"
 #include "signalsmith-dsp/rates.h"

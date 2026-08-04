@@ -1,14 +1,11 @@
 #pragma once
 
-#include "chardsp/chardsp_OpenSourceLicenses.h"
-
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <optional>
 #include <type_traits>
 
-#include "chardsp/detail/chardsp_EllipticBLEPLicense.h"
 #include "choc/platform/choc_DisableAllWarnings.h"
 #include "elliptic-blep.h"
 #include "choc/platform/choc_ReenableAllWarnings.h"

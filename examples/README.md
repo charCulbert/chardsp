@@ -10,7 +10,7 @@ The available demos are:
 - ADSR envelope
 - state-variable filter
 - colored noise
-- 4x downsampler
+- simple downsampler
 - delay line
 - block oversampler
 - voice pool

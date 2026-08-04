@@ -1,13 +1,12 @@
 #pragma once
 
-#include <array>
-#include <atomic>
 #include <cstddef>
-#include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "choc/audio/io/choc_AudioMIDIPlayer.h"
+#include "choc/containers/choc_SingleReaderSingleWriterFIFO.h"
 
 namespace chardsp::examples
 {
@@ -29,36 +28,23 @@ public:
 template <typename Action, size_t capacity = 64> class ActionQueue
 {
 public:
+    ActionQueue()
+    {
+        fifo.reset (capacity);
+    }
+
     bool push (Action action) noexcept
     {
-        const auto nextWrite = write.load (std::memory_order_relaxed);
-        const auto nextRead = read.load (std::memory_order_acquire);
-
-        if (nextWrite - nextRead >= capacity)
-            return false;
-
-        actions[nextWrite % capacity] = action;
-        write.store (nextWrite + 1, std::memory_order_release);
-        return true;
+        return fifo.push (std::move (action));
     }
 
     bool pop (Action &action) noexcept
     {
-        const auto nextRead = read.load (std::memory_order_relaxed);
-        const auto nextWrite = write.load (std::memory_order_acquire);
-
-        if (nextRead == nextWrite)
-            return false;
-
-        action = actions[nextRead % capacity];
-        read.store (nextRead + 1, std::memory_order_release);
-        return true;
+        return fifo.pop (action);
     }
 
 private:
-    std::array<Action, capacity> actions{};
-    std::atomic<uint32_t> write{0};
-    std::atomic<uint32_t> read{0};
+    choc::fifo::SingleReaderSingleWriterFIFO<Action> fifo;
 };
 
 template <typename NextSample>

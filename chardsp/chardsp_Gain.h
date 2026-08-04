@@ -1,20 +1,11 @@
 #pragma once
 
-#include "chardsp/chardsp_OpenSourceLicenses.h"
-
 #include <algorithm>
 #include <cmath>
 #include <type_traits>
 
 namespace chardsp
 {
-
-template <typename SampleType>
-inline SampleType gain (SampleType sample, SampleType amount) noexcept
-{
-    static_assert (std::is_floating_point_v<SampleType>);
-    return sample * amount;
-}
 
 template <typename SampleType>
 inline SampleType linearCrossfade (SampleType first,

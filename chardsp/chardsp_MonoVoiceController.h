@@ -1,7 +1,5 @@
 #pragma once
 
-#include "chardsp/chardsp_OpenSourceLicenses.h"
-
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -215,7 +213,7 @@ struct MonoVoiceController
         return {};
     }
 
-    Action allKeysOff() noexcept
+    Action releaseAll() noexcept
     {
         const auto action = gateActive ? releaseAction() : Action {};
         reset();

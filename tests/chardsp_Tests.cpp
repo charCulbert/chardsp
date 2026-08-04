@@ -17,7 +17,6 @@
 #include "chardsp/chardsp_DCBlocker.h"
 #include "chardsp/chardsp_DelayLine.h"
 #include "chardsp/chardsp_Detectors.h"
-#include "chardsp/chardsp_Downsampler4x.h"
 #include "chardsp/chardsp_EllipticBLEP.h"
 #include "chardsp/chardsp_Gain.h"
 #include "chardsp/chardsp_MonoVoiceController.h"
@@ -27,6 +26,7 @@
 #include "chardsp/chardsp_Oversampler.h"
 #include "chardsp/chardsp_Portamento.h"
 #include "chardsp/chardsp_SamplePlayer.h"
+#include "chardsp/chardsp_SimpleDownsampler.h"
 #include "chardsp/chardsp_SmoothedValue.h"
 #include "chardsp/chardsp_StateVariableFilter.h"
 #include "chardsp/chardsp_VoicePool.h"
@@ -104,7 +104,7 @@ void testSmoothedValue (choc::test::TestProgress& progress)
     CHOC_EXPECT_NEAR (value.getCurrent(), 0.0f, 0.000001f);
 }
 
-void testDelayLineAndGain (choc::test::TestProgress& progress)
+void testDelayLineAndCrossfade (choc::test::TestProgress& progress)
 {
     chardsp::DelayLine<float, 4> delay;
     static_assert (decltype (delay)::maximumDelay == 3);
@@ -138,7 +138,6 @@ void testDelayLineAndGain (choc::test::TestProgress& progress)
     doubleDelay.write (2.0);
     CHOC_EXPECT_TRUE (std::isfinite (doubleDelay.read()));
 
-    CHOC_EXPECT_NEAR (chardsp::gain (2.0f, 0.25f), 0.5f, 0.000001f);
     CHOC_EXPECT_NEAR (chardsp::linearCrossfade (-1.0f, 1.0f, 0.25f), -0.5f, 0.000001f);
     CHOC_EXPECT_NEAR (chardsp::linearCrossfade (-1.0f, 1.0f, -2.0f), -1.0f, 0.000001f);
     CHOC_EXPECT_NEAR (chardsp::equalPowerCrossfade (1.0f, 0.0f, 0.0f), 1.0f, 0.000001f);
@@ -1503,20 +1502,23 @@ void testColoredNoiseBehavior (choc::test::TestProgress& progress)
     CHOC_EXPECT_EQ (allocationCount.load(), allocationsBeforeRender);
 }
 
-void testDownsamplerParity (choc::test::TestProgress& progress)
+void testSimpleDownsamplerParity (choc::test::TestProgress& progress)
 {
     constexpr std::array<float, 12> reference {
         0.002049217699f, 0.04932555556f, 0.1835883409f, 0.07104226947f,
         -0.1017052084f, 0.07502372563f, -0.04592199996f, 0.0247429572f,
         -0.01101632882f, 0.002590026706f, 0.002369836438f, -0.005135977641f
     };
-    chardsp::Downsampler4x<float> downsampler;
+    chardsp::SimpleDownsampler<float, 4> downsampler;
 
     for (size_t i = 0; i < reference.size(); ++i)
-        CHOC_EXPECT_NEAR (downsampler.process (i == 0 ? 1.0f : 0.0f,
-                                          0.0f,
-                                          0.0f,
-                                          0.0f), reference[i], 0.000001f);
+        CHOC_EXPECT_NEAR (downsampler.process ({ i == 0 ? 1.0f : 0.0f,
+                                                0.0f, 0.0f, 0.0f }),
+                          reference[i], 0.000001f);
+
+    downsampler.reset();
+    CHOC_EXPECT_NEAR (downsampler.process ({ 1.0f, 0.0f, 0.0f, 0.0f }),
+                      reference[0], 0.000001f);
 }
 
 float downsampledSineRMS (float frequency)
@@ -1524,7 +1526,7 @@ float downsampledSineRMS (float frequency)
     constexpr float oversampledRate = 192000.0f;
     constexpr int discardedOutputs = 4096;
     constexpr int measuredOutputs = 8192;
-    chardsp::Downsampler4x<float> downsampler;
+    chardsp::SimpleDownsampler<float, 4> downsampler;
     double sumSquares = 0.0;
 
     for (int outputIndex = 0; outputIndex < discardedOutputs + measuredOutputs;
@@ -1549,45 +1551,26 @@ float downsampledSineRMS (float frequency)
     return static_cast<float> (std::sqrt (sumSquares / measuredOutputs));
 }
 
-void testDownsamplerBehavior (choc::test::TestProgress& progress)
+void testSimpleDownsamplerBehavior (choc::test::TestProgress& progress)
 {
-    chardsp::Downsampler4x<float> scalar;
-    chardsp::Downsampler4x<float> array;
-
-    for (int i = 0; i < 1024; ++i)
-    {
-        const std::array<float, 4> samples {
-            std::sin (0.07f * static_cast<float> (i * 4)),
-            std::sin (0.07f * static_cast<float> (i * 4 + 1)),
-            std::sin (0.07f * static_cast<float> (i * 4 + 2)),
-            std::sin (0.07f * static_cast<float> (i * 4 + 3))
-        };
-        CHOC_EXPECT_NEAR (scalar.process (samples[0], samples[1], samples[2], samples[3]), array.process (samples), 0.000001f);
-    }
-
-    scalar.reset();
-    array.reset();
-
-    for (int i = 0; i < 128; ++i)
-    {
-        const auto expected = array.process (i == 0
-                                                 ? std::array<float, 4> { 1.0f, 0.0f,
-                                                                          0.0f, 0.0f }
-                                                 : std::array<float, 4> {});
-        const auto actual = scalar.process (i == 0 ? 1.0f : 0.0f,
-                                            0.0f,
-                                            0.0f,
-                                            0.0f);
-        CHOC_EXPECT_NEAR (actual, expected, 0.000001f);
-    }
-
-    scalar.reset();
-    float dc = 0.0f;
+    chardsp::SimpleDownsampler<float, 2> two;
+    chardsp::SimpleDownsampler<float, 4> four;
+    chardsp::SimpleDownsampler<float, 8> eight;
+    float dc2 = 0.0f;
+    float dc4 = 0.0f;
+    float dc8 = 0.0f;
 
     for (int i = 0; i < 4096; ++i)
-        dc = scalar.process (1.0f, 1.0f, 1.0f, 1.0f);
+    {
+        dc2 = two.process ({ 1.0f, 1.0f });
+        dc4 = four.process ({ 1.0f, 1.0f, 1.0f, 1.0f });
+        dc8 = eight.process ({ 1.0f, 1.0f, 1.0f, 1.0f,
+                               1.0f, 1.0f, 1.0f, 1.0f });
+    }
 
-    CHOC_EXPECT_NEAR (dc, 1.0f, 0.00001f);
+    CHOC_EXPECT_NEAR (dc2, 1.0f, 0.00001f);
+    CHOC_EXPECT_NEAR (dc4, 1.0f, 0.00001f);
+    CHOC_EXPECT_NEAR (dc8, 1.0f, 0.00001f);
 
     const auto lowFrequencyRMS = downsampledSineRMS (1000.0f);
     const auto highFrequencyRMS = downsampledSineRMS (40000.0f);
@@ -1600,10 +1583,8 @@ void testDownsamplerBehavior (choc::test::TestProgress& progress)
     for (int i = 0; i < 200000; ++i)
     {
         const auto input = std::sin (0.031f * static_cast<float> (i));
-        allFinite = allFinite && std::isfinite (scalar.process (input,
-                                                                -input,
-                                                                input * 0.5f,
-                                                                -input * 0.5f));
+        allFinite = allFinite && std::isfinite (four.process (
+            { input, -input, input * 0.5f, -input * 0.5f }));
     }
 
     CHOC_EXPECT_TRUE (allFinite);
@@ -1645,7 +1626,7 @@ void testDoublePrecisionTypes (choc::test::TestProgress& progress)
     noise.reset (0x12345678u);
     noise.setColor (chardsp::NoiseColor::pink);
 
-    chardsp::Downsampler4x<double> downsampler;
+    chardsp::SimpleDownsampler<double, 4> downsampler;
     chardsp::PolyBLEPTriangleOscillator<double> oscillator;
     oscillator.prepare (48000.0);
     oscillator.setFrequency (440.0);
@@ -1671,7 +1652,8 @@ void testDoublePrecisionTypes (choc::test::TestProgress& progress)
         const auto excitation = oscillator.next() + noise.next() * 0.1;
         const auto filtered = filter.process (excitation) * envelope.next();
         const auto downsampled = downsampler.process (
-            filtered, filtered * 0.5, -filtered * 0.25, filtered * 0.125);
+            { filtered, filtered * 0.5, -filtered * 0.25,
+              filtered * 0.125 });
         allFinite = allFinite && std::isfinite (downsampled)
                    && std::isfinite (ellipticSaw.next())
                    && std::isfinite (basicVoice.next());
@@ -2247,6 +2229,9 @@ void testMonoVoiceController (choc::test::TestProgress& progress)
     small.start (2000, 62.0, 1.0);
     small.start (3000, 64.0, 1.0);
     CHOC_EXPECT_EQ (small.getHeldCount(), 2);
+    CHOC_EXPECT_TRUE (small.releaseAll().shouldRelease());
+    CHOC_EXPECT_EQ (small.getHeldCount(), 0);
+    CHOC_EXPECT_FALSE (small.isGateActive());
 }
 
 } // namespace
@@ -2277,7 +2262,7 @@ int main()
     CHOC_CATEGORY (chardsp);
 
     { CHOC_TEST (smoothed_value); testSmoothedValue (progress); }
-    { CHOC_TEST (delay_line_and_gain); testDelayLineAndGain (progress); }
+    { CHOC_TEST (delay_line_and_crossfade); testDelayLineAndCrossfade (progress); }
     { CHOC_TEST (dc_blocker_and_detectors); testDCBlockerAndDetectors (progress); }
     { CHOC_TEST (biquad); testBiquad (progress); }
     { CHOC_TEST (sample_player); testSamplePlayer (progress); }
@@ -2294,8 +2279,10 @@ int main()
     { CHOC_TEST (svf_behavior); testStateVariableFilterBehavior (progress); }
     { CHOC_TEST (colored_noise_reference); testColoredNoiseParity (progress); }
     { CHOC_TEST (colored_noise_behavior); testColoredNoiseBehavior (progress); }
-    { CHOC_TEST (downsampler_reference); testDownsamplerParity (progress); }
-    { CHOC_TEST (downsampler_behavior); testDownsamplerBehavior (progress); }
+    { CHOC_TEST (simple_downsampler_reference);
+      testSimpleDownsamplerParity (progress); }
+    { CHOC_TEST (simple_downsampler_behavior);
+      testSimpleDownsamplerBehavior (progress); }
     { CHOC_TEST (double_precision_types); testDoublePrecisionTypes (progress); }
     { CHOC_TEST (voice_pool_basics); testVoicePoolBasics (progress); }
     { CHOC_TEST (voice_pool_stealing); testVoicePoolStealing (progress); }

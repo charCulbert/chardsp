@@ -1,19 +1,20 @@
 #pragma once
 
-#include "chardsp/chardsp_OpenSourceLicenses.h"
-
 #include <array>
+#include <cstddef>
 #include <type_traits>
 
 namespace chardsp
 {
 
-template <typename SampleType>
-struct Downsampler4x
+template <typename SampleType, size_t factor>
+struct SimpleDownsampler
 {
     static_assert (std::is_same_v<SampleType, float>
                    || std::is_same_v<SampleType, double>,
-                   "Downsampler4x supports float or double");
+                   "SimpleDownsampler supports float or double");
+    static_assert (factor >= 2 && (factor & (factor - 1)) == 0,
+                   "SimpleDownsampler factor must be a power of two");
 
     void reset() noexcept
     {
@@ -21,22 +22,32 @@ struct Downsampler4x
             filter.reset();
     }
 
-    SampleType process (SampleType first, SampleType second,
-                        SampleType third, SampleType fourth) noexcept
+    SampleType process (std::array<SampleType, factor> samples) noexcept
     {
-        filters[0].process (first, second, first);
-        filters[0].process (third, fourth, third);
-        SampleType output {};
-        filters[1].process (first, third, output);
-        return output;
-    }
+        auto samplesInStage = factor;
 
-    SampleType process (const std::array<SampleType, 4>& samples) noexcept
-    {
-        return process (samples[0], samples[1], samples[2], samples[3]);
+        for (auto& filter : filters)
+        {
+            for (size_t i = 0; i < samplesInStage; i += 2)
+                filter.process (samples[i], samples[i + 1], samples[i / 2]);
+
+            samplesInStage /= 2;
+        }
+
+        return samples[0];
     }
 
 private:
+    static constexpr size_t countStages() noexcept
+    {
+        auto stages = size_t {};
+
+        for (auto remaining = factor; remaining > 1; remaining /= 2)
+            ++stages;
+
+        return stages;
+    }
+
     struct HalfRateFilter
     {
         void reset() noexcept
@@ -76,7 +87,7 @@ private:
         SampleType b3 {};
     };
 
-    std::array<HalfRateFilter, 2> filters {};
+    std::array<HalfRateFilter, countStages()> filters {};
 };
 
 } // namespace chardsp

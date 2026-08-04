@@ -5,8 +5,8 @@
 #include <atomic>
 #include <cmath>
 
-#include "chardsp/chardsp_Downsampler4x.h"
 #include "chardsp/chardsp_Oscillator.h"
+#include "chardsp/chardsp_SimpleDownsampler.h"
 
 namespace
 {
@@ -15,17 +15,17 @@ class DownsamplerDemo final : public chardsp::examples::Demo
 public:
     std::string_view getName () const noexcept override
     {
-        return "4x downsampler";
+        return "Simple downsampler";
     }
     std::string_view getPageConfig () const noexcept override
     {
-        return R"JS({title:"4x downsampler",description:"Compare a driven sine directly at 1x with external 4x rendering through Downsampler4x.",controls:[{name:"frequency",label:"Input frequency",min:100,max:12000,step:10,value:9000,unit:" Hz"},{name:"drive",label:"Waveshaper drive",min:1,max:20,step:.1,value:3,unit:" x",precision:1}],actions:[{label:"1x direct (aliased)",action:"mode",value:0,group:"mode",groupLabel:"Path"},{label:"4x + Downsampler4x",action:"mode",value:1,group:"mode",selected:true},{label:"Reset phase + filter",action:"reset"},{label:"Off",action:"enabled",value:0,group:"enabled",groupLabel:"Output"},{label:"On",action:"enabled",value:1,group:"enabled",selected:true}]})JS";
+        return R"JS({title:"Simple downsampler",description:"Compare direct processing with low-latency 2x, 4x, and 8x rendering.",controls:[{name:"frequency",label:"Input frequency",min:100,max:12000,step:10,value:9000,unit:" Hz"},{name:"drive",label:"Waveshaper drive",min:1,max:20,step:.1,value:3,unit:" x",precision:1}],actions:[{label:"1x direct (aliased)",action:"mode",value:0,group:"mode",groupLabel:"Rate"},{label:"2x",action:"mode",value:1,group:"mode"},{label:"4x",action:"mode",value:2,group:"mode",selected:true},{label:"8x",action:"mode",value:3,group:"mode"},{label:"Reset phase + filters",action:"reset"},{label:"Off",action:"enabled",value:0,group:"enabled",groupLabel:"Output"},{label:"On",action:"enabled",value:1,group:"enabled",selected:true}]})JS";
     }
     void sampleRateChanged (double rate) override
     {
         sampleRate = static_cast<float> (rate);
         low.prepare (sampleRate);
-        high.prepare (sampleRate * 4);
+        prepareHighRateOscillator ();
         reset ();
     }
     void setControl (std::string_view name, float value) noexcept override
@@ -53,7 +53,8 @@ public:
         {
             if (action.type == 0)
             {
-                mode = std::clamp (action.value, 0, 1);
+                mode = std::clamp (action.value, 0, 3);
+                prepareHighRateOscillator ();
                 reset ();
             }
             else if (action.type == 1)
@@ -70,10 +71,11 @@ public:
             const auto amount = drive.load ();
             if (mode == 0)
                 return std::tanh (low.next () * amount) * .2f;
-            std::array<float, 4> samples{};
-            for (auto &sample : samples)
-                sample = std::tanh (high.next () * amount) * .2f;
-            return downsampler.process (samples);
+            if (mode == 1)
+                return renderOversampled (downsampler2x, amount);
+            if (mode == 2)
+                return renderOversampled (downsampler4x, amount);
+            return renderOversampled (downsampler8x, amount);
         });
     }
 
@@ -82,7 +84,25 @@ private:
     {
         low.reset ();
         high.reset ();
-        downsampler.reset ();
+        downsampler2x.reset ();
+        downsampler4x.reset ();
+        downsampler8x.reset ();
+    }
+    void prepareHighRateOscillator ()
+    {
+        const auto factor = mode == 1 ? 2 : mode == 3 ? 8 : 4;
+        high.prepare (sampleRate * static_cast<float> (factor));
+    }
+    template <size_t factor>
+    float renderOversampled (chardsp::SimpleDownsampler<float, factor> &downsampler,
+                             float amount)
+    {
+        std::array<float, factor> samples{};
+
+        for (auto &sample : samples)
+            sample = std::tanh (high.next () * amount) * .2f;
+
+        return downsampler.process (samples);
     }
     struct Action
     {
@@ -92,10 +112,12 @@ private:
     chardsp::examples::ActionQueue<Action> actions;
     std::atomic<float> frequency{9000}, drive{3};
     float sampleRate = 48000;
-    int mode = 1;
+    int mode = 2;
     bool enabled = true;
     chardsp::SineOscillator<float> low, high;
-    chardsp::Downsampler4x<float> downsampler;
+    chardsp::SimpleDownsampler<float, 2> downsampler2x;
+    chardsp::SimpleDownsampler<float, 4> downsampler4x;
+    chardsp::SimpleDownsampler<float, 8> downsampler8x;
 };
 } // namespace
 int main ()
