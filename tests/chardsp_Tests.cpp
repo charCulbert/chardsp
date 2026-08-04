@@ -23,7 +23,6 @@
 #include "chardsp/chardsp_EllipticBLEP.h"
 #include "chardsp/chardsp_Gain.h"
 #include "chardsp/chardsp_MonoVoiceController.h"
-#include "chardsp/chardsp_NomadOscillators.h"
 #include "chardsp/chardsp_Oscillator.h"
 #include "chardsp/chardsp_OscillatorEvents.h"
 #include "chardsp/chardsp_OscillatorPhase.h"
@@ -988,131 +987,8 @@ void testGenericOscillators (choc::test::TestProgress& progress)
         CHECK (near (advanced.next(), rendered.next(), 0.000002f));
 }
 
-void testNomadOscillator (choc::test::TestProgress& progress)
-{
-    constexpr std::array waveforms {
-        chardsp::NomadOscillatorWaveform::saw,
-        chardsp::NomadOscillatorWaveform::ramp,
-        chardsp::NomadOscillatorWaveform::pulse,
-        chardsp::NomadOscillatorWaveform::triangle,
-        chardsp::NomadOscillatorWaveform::sine
-    };
-    constexpr std::array<std::array<float, 6>, 5> reference {{
-        {{ 0.002756481f, 0.095859312f, 0.598600566f,
-           1.067782998f, 0.649674058f, 0.579240561f }},
-        {{ -0.002756481f, -0.095859312f, -0.598600566f,
-           -1.067782998f, -0.649674058f, -0.579240561f }},
-        {{ 0.002501482f, 0.054757807f, 0.042682324f,
-           -0.799973488f, -1.350166559f, -0.746327102f }},
-        {{ -0.002728588f, -0.093261167f, -0.564077377f,
-           -0.920363069f, -0.357993066f, -0.175391957f }},
-        {{ 0.000087309f, 0.008079876f, 0.105925441f,
-           0.438298821f, 0.801043510f, 0.942837477f }}
-    }};
-
-    chardsp::NomadOscillator<float> unprepared;
-    unprepared.setFrequency (440.0f);
-    CHECK (near (unprepared.next(), 0.0f));
-
-    for (size_t waveform = 0; waveform < waveforms.size(); ++waveform)
-    {
-        chardsp::NomadOscillator<float> oscillator;
-        oscillator.prepare (48000.0f);
-        oscillator.setWaveform (waveforms[waveform]);
-        oscillator.setShape (0.0f);
-        oscillator.setFrequency (3000.0f);
-        oscillator.reset();
-
-        for (const auto expected : reference[waveform])
-            CHECK (near (oscillator.next(), expected, 0.000002f));
-    }
-
-    chardsp::NomadOscillator<float> first;
-    chardsp::NomadOscillator<float> second;
-    first.prepare (44100.0f);
-    second.prepare (44100.0f);
-    first.setWaveform (chardsp::NomadOscillatorWaveform::triangle);
-    second.setWaveform (chardsp::NomadOscillatorWaveform::triangle);
-    first.setShape (0.75f);
-    second.setShape (0.75f);
-    first.setFrequency (997.0f);
-    second.setFrequency (997.0f);
-    first.reset (0.37f);
-    second.reset (0.37f);
-    const auto allocationsBeforeRender = allocationCount.load();
-
-    for (int i = 0; i < 200000; ++i)
-    {
-        const auto sample = first.next();
-        CHECK (std::isfinite (sample));
-        CHECK (near (sample, second.next()));
-    }
-
-    CHECK (allocationCount.load() == allocationsBeforeRender);
-
-    first.setShape (-1.0f);
-    CHECK (near (first.getShape(), 0.0f));
-    first.setShape (2.0f);
-    CHECK (near (first.getShape(), 1.0f));
-    first.setFrequency (std::numeric_limits<float>::infinity());
-    CHECK (near (first.getFrequency(), 44100.0f * 0.49f));
-    CHECK (std::isfinite (first.next()));
-
-    // advance() follows the same phase timeline as discarding a rendered
-    // output sample, but does not keep stale oversampling-filter state.
-    chardsp::NomadOscillator<float> advanced;
-    chardsp::NomadOscillator<float> rendered;
-    advanced.prepare (48000.0f);
-    rendered.prepare (48000.0f);
-    advanced.setWaveform (chardsp::NomadOscillatorWaveform::sine);
-    rendered.setWaveform (chardsp::NomadOscillatorWaveform::sine);
-    advanced.setFrequency (997.0f);
-    rendered.setFrequency (997.0f);
-    advanced.reset (0.37f);
-    rendered.reset (0.37f);
-
-    constexpr int skippedSamples = 137;
-    for (int i = 0; i < skippedSamples; ++i)
-    {
-        advanced.advance();
-        rendered.next();
-    }
-
-    // A waveform round-trip resets only the rendered oscillator's stale
-    // downsampler, leaving its reference phase untouched.
-    rendered.setWaveform (chardsp::NomadOscillatorWaveform::triangle);
-    rendered.setWaveform (chardsp::NomadOscillatorWaveform::sine);
-
-    for (int i = 0; i < 64; ++i)
-        CHECK (near (advanced.next(), rendered.next(), 0.000002f));
-}
-
 void testBasicSynthVoice (choc::test::TestProgress& progress)
 {
-    chardsp::BasicSynthVoice<float> retainedFilter;
-    retainedFilter.prepare (48000.0f, 0);
-    retainedFilter.setPhaseMode (chardsp::OscillatorPhaseMode::resetOnNote);
-    retainedFilter.setOscillator1Waveform (
-        chardsp::NomadOscillatorWaveform::sine);
-    retainedFilter.setOscillator1Shape (0.0f);
-    retainedFilter.setOscillator1Level (1.0f);
-    retainedFilter.setOscillator2Level (0.0f);
-    retainedFilter.setNoiseLevel (0.0f);
-    retainedFilter.setFilter (chardsp::FilterMode::lowpass, 4000.0f, 5.0f);
-    retainedFilter.setAttack (0.0f);
-    retainedFilter.setDecay (0.0f);
-    retainedFilter.setSustain (1.0f);
-    retainedFilter.setRelease (0.0f);
-    retainedFilter.start (69.0f, 1.0f);
-
-    for (int i = 0; i < 32; ++i)
-        (void) retainedFilter.next();
-
-    retainedFilter.forceRelease (0.0f);
-    retainedFilter.setOscillator1Level (0.0f);
-    retainedFilter.start (69.0f, 1.0f);
-    CHECK (std::abs (retainedFilter.next()) > 0.000001f);
-
     chardsp::BasicSynthVoice<float> fullVelocity;
     chardsp::BasicSynthVoice<float> halfVelocity;
     chardsp::BasicSynthVoice<float> ignoredVelocity;
@@ -1122,17 +998,14 @@ void testBasicSynthVoice (choc::test::TestProgress& progress)
     ignoredVelocity.prepare (48000.0f, 3);
     squaredVelocity.prepare (48000.0f, 3);
 
-    for (auto* voice : { &fullVelocity, &halfVelocity,
-                         &ignoredVelocity, &squaredVelocity })
+    for (auto* voice : { &fullVelocity, &halfVelocity, &ignoredVelocity,
+                         &squaredVelocity })
     {
-        voice->setPhaseMode (chardsp::OscillatorPhaseMode::resetOnNote);
-        voice->setOscillator1Waveform (
-            chardsp::NomadOscillatorWaveform::sine);
-        voice->setOscillator1Shape (0.0f);
-        voice->setOscillator1Level (1.0f);
-        voice->setOscillator2Level (0.0f);
+        voice->setOscillator1Level (0.0f);
+        voice->setOscillator2Waveform (chardsp::BasicSynthWaveform::sine);
+        voice->setOscillator2Level (1.0f);
         voice->setNoiseLevel (0.0f);
-        voice->setFilter (chardsp::FilterMode::lowpass, 4000.0f, 0.8f);
+        voice->setFilter (chardsp::FilterMode::lowpass, 12000.0f, 0.8f);
         voice->setAttack (0.0f);
         voice->setDecay (0.0f);
         voice->setSustain (1.0f);
@@ -1152,6 +1025,45 @@ void testBasicSynthVoice (choc::test::TestProgress& progress)
         CHECK (near (ignoredVelocity.next(), full, 0.000002f));
         CHECK (near (squaredVelocity.next(), full * 0.25f, 0.000002f));
     }
+
+    fullVelocity.forceRelease (0.0f);
+    CHECK (fullVelocity.isAvailable());
+
+    constexpr std::array waveforms {
+        chardsp::BasicSynthWaveform::saw,
+        chardsp::BasicSynthWaveform::pulse,
+        chardsp::BasicSynthWaveform::triangle,
+        chardsp::BasicSynthWaveform::sine
+    };
+
+    for (const auto waveform : waveforms)
+    {
+        chardsp::BasicSynthVoice<float> voice;
+        voice.prepare (48000.0f, 0);
+        voice.setOscillator1Waveform (waveform);
+        voice.setOscillator1PulseWidth (0.35f);
+        voice.setOscillator1Level (1.0f);
+        voice.setOscillator2Level (0.0f);
+        voice.setNoiseLevel (0.0f);
+        voice.setAttack (0.0f);
+        voice.setDecay (0.0f);
+        voice.setSustain (1.0f);
+        voice.start (69.0f, 1.0f);
+
+        float peak = 0.0f;
+        for (int sample = 0; sample < 256; ++sample)
+        {
+            const auto output = voice.next();
+            CHECK (std::isfinite (output));
+            peak = std::max (peak, std::abs (output));
+        }
+        CHECK (peak > 0.01f);
+    }
+
+    fullVelocity.setOscillator1PulseWidth (-1.0f);
+    halfVelocity.setOscillator2PulseWidth (2.0f);
+    CHECK (near (fullVelocity.getOscillator1PulseWidth(), 0.001f));
+    CHECK (near (halfVelocity.getOscillator2PulseWidth(), 0.999f));
 }
 
 void testChocTriangleModulation (choc::test::TestProgress& progress)
@@ -1843,6 +1755,8 @@ void testDoublePrecisionTypes (choc::test::TestProgress& progress)
 
     chardsp::BasicSynthVoice<double> basicVoice;
     basicVoice.prepare (48000.0, 3);
+    basicVoice.setOscillator1Waveform (chardsp::BasicSynthWaveform::pulse);
+    basicVoice.setOscillator1PulseWidth (0.35);
     basicVoice.start (69.0, 0.8);
 
     const auto allocationsBeforeRender = allocationCount.load();
@@ -1906,8 +1820,11 @@ struct TestVoice
     {
         ++forcedReleaseCount;
         lastForcedReleaseSeconds = seconds;
-        releaseSamplesRemaining = std::max (1,
-            static_cast<int> (seconds * sampleRate + 0.5f));
+        releaseSamplesRemaining = seconds > 0.0f
+            ? std::max (1, static_cast<int> (seconds * sampleRate + 0.5f))
+            : 0;
+        if (releaseSamplesRemaining == 0)
+            active = false;
     }
 
     float next() noexcept
@@ -2023,7 +1940,7 @@ void testVoicePool (choc::test::TestProgress& progress)
     CHECK (pool.findVoice (60) == 0);
     CHECK (pool.findVoice (62) == 1);
 
-    // Unlike Nomad's event-only allocator, the C++ pool can ask the voice when
+    // Unlike reference event-only allocator, the C++ pool can ask the voice when
     // its tail is actually available and reclaim it immediately.
     pool.prepare (1000.0f);
     pool.start (60, 1.0f);
@@ -2197,7 +2114,7 @@ void testVoicePool (choc::test::TestProgress& progress)
     pool.start (69, 1.0f);
     CHECK (pool.findVoice (69) >= 0);
 
-    pool.allKeysOff();
+    pool.releaseAll();
 
     for (int i = 0; i < 4; ++i)
         pool.next();
@@ -2207,10 +2124,12 @@ void testVoicePool (choc::test::TestProgress& progress)
     pool.prepare (1000.0f);
     pool.start (69, 1.0f);
     pool.start (71, 1.0f);
-    pool.forceReleaseAll();
+    pool.reset();
     CHECK (pool.getVoice (0).forcedReleaseCount
            + pool.getVoice (1).forcedReleaseCount
            + pool.getVoice (2).forcedReleaseCount == 2);
+    CHECK (pool.getActiveVoiceCount() == 0);
+    CHECK (pool.getAllocatedVoiceCount() == 0);
 
     // Sustain defers voice release without introducing MIDI into the pool.
     pool.prepare (1000.0f);
@@ -2223,7 +2142,7 @@ void testVoicePool (choc::test::TestProgress& progress)
     CHECK (pool.getVoice (0).releaseCount == 1);
 
     // Release duration comes from the Voice, not a guessed allocator timeout.
-    // This tail deliberately lasts longer than Nomad's old ten-second memory.
+    // This tail deliberately lasts longer than reference old ten-second memory.
     pool.prepare (10.0f);
     pool.start (74, 1.0f);
     pool.stop (74);
@@ -2309,7 +2228,7 @@ void testPortamento (choc::test::TestProgress& progress)
     CHECK (! glide.isGliding());
     CHECK (near (glide.next(), 66.0f));
 
-    // The curved endpoint is the active Nomad analog-shape equation.
+    // The curved endpoint is the active exponential equation.
     glide.reset (60.0f);
     glide.setTimeRateMorph (0.0f);
     glide.setShape (1.0f);
@@ -2319,9 +2238,9 @@ void testPortamento (choc::test::TestProgress& progress)
         glide.next();
 
     const auto strength = 6.0f;
-    const auto analog = (1.0f - std::exp (-strength * 0.5f))
-                      / (1.0f - std::exp (-strength));
-    CHECK (near (glide.next(), 60.0f + 12.0f * analog, 0.00001f));
+    const auto exponential = (1.0f - std::exp (-strength * 0.5f))
+                           / (1.0f - std::exp (-strength));
+    CHECK (near (glide.next(), 60.0f + 12.0f * exponential, 0.00001f));
 
     glide.setTarget (48.0f, false);
     CHECK (near (glide.next(), 48.0f));
@@ -2362,7 +2281,7 @@ void testMonoVoiceController (choc::test::TestProgress& progress)
     CHECK (! action.hasPitch() && ! action.shouldRelease());
     CHECK (mono.getHeldCount() == 1);
 
-    // Legato delays the final gate-off by Nomad Cmajor's 24 ms grace window.
+    // Legato delays the final gate-off by reference 24 ms grace window.
     CHECK (! mono.stop (2).shouldRelease());
     CHECK (mono.hasPendingGateOff());
 
@@ -2422,15 +2341,13 @@ static_assert (std::is_nothrow_default_constructible_v<
 static_assert (std::is_nothrow_default_constructible_v<
                chardsp::PolyBLEPPulseOscillator<double>>);
 static_assert (std::is_nothrow_default_constructible_v<
-               chardsp::NomadOscillator<float>>);
+               chardsp::BasicSynthVoice<double>>);
 static_assert (std::is_nothrow_default_constructible_v<
                chardsp::VoicePool<TestVoice, 4>>);
 static_assert (std::is_nothrow_default_constructible_v<
                chardsp::Portamento<double>>);
 static_assert (std::is_nothrow_default_constructible_v<
                chardsp::MonoVoiceController<double, uint64_t, 64>>);
-static_assert (std::is_nothrow_default_constructible_v<
-               chardsp::BasicSynthVoice<double>>);
 
 } // namespace
 
@@ -2470,17 +2387,16 @@ int main()
     { CHOC_TEST (oscillator_phase_and_elliptic_correction);
       testOscillatorPhaseAndEllipticCorrection (progress); }
     { CHOC_TEST (generic_oscillators); testGenericOscillators (progress); }
-    { CHOC_TEST (nomad_oscillator); testNomadOscillator (progress); }
     { CHOC_TEST (basic_synth_voice); testBasicSynthVoice (progress); }
     { CHOC_TEST (choc_triangle_modulation); testChocTriangleModulation (progress); }
-    { CHOC_TEST (adsr_nomad_parity); testADSREnvelopeParity (progress); }
+    { CHOC_TEST (adsr_reference); testADSREnvelopeParity (progress); }
     { CHOC_TEST (adsr_behavior); testADSREnvelopeBehavior (progress); }
     { CHOC_TEST (adsr_live_updates); testADSREnvelopeLiveUpdates (progress); }
-    { CHOC_TEST (svf_nomad_parity); testStateVariableFilterParity (progress); }
+    { CHOC_TEST (svf_reference); testStateVariableFilterParity (progress); }
     { CHOC_TEST (svf_behavior); testStateVariableFilterBehavior (progress); }
-    { CHOC_TEST (colored_noise_nomad_parity); testColoredNoiseParity (progress); }
+    { CHOC_TEST (colored_noise_reference); testColoredNoiseParity (progress); }
     { CHOC_TEST (colored_noise_behavior); testColoredNoiseBehavior (progress); }
-    { CHOC_TEST (downsampler_nomad_parity); testDownsamplerParity (progress); }
+    { CHOC_TEST (downsampler_reference); testDownsamplerParity (progress); }
     { CHOC_TEST (downsampler_behavior); testDownsamplerBehavior (progress); }
     { CHOC_TEST (double_precision_types); testDoublePrecisionTypes (progress); }
     { CHOC_TEST (voice_pool); testVoicePool (progress); }

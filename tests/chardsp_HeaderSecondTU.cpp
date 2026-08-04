@@ -9,7 +9,6 @@
 #include "chardsp/chardsp_EllipticBLEP.h"
 #include "chardsp/chardsp_Gain.h"
 #include "chardsp/chardsp_MonoVoiceController.h"
-#include "chardsp/chardsp_NomadOscillators.h"
 #include "chardsp/chardsp_Oscillator.h"
 #include "chardsp/chardsp_OscillatorEvents.h"
 #include "chardsp/chardsp_OscillatorPhase.h"

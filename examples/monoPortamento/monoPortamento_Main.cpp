@@ -1,8 +1,11 @@
 #include <filesystem>
 #include <iostream>
+#include <algorithm>
+#include <cmath>
 
-#include "chardsp/chardsp_BasicSynthVoice.h"
+#include "chardsp/chardsp_ADSREnvelope.h"
 #include "chardsp/chardsp_MonoVoiceController.h"
+#include "chardsp/chardsp_Oscillator.h"
 #include "chardsp/chardsp_Portamento.h"
 #include "choc/audio/choc_AudioFileFormat_WAV.h"
 #include "choc/audio/choc_SampleBuffers.h"
@@ -27,18 +30,50 @@ int main (int argc, const char* const* argv)
     portamento.setShape (0.5f);
     portamento.setTimeRateMorph (0.0f);
 
-    chardsp::BasicSynthVoice<float> voice;
-    voice.prepare (sampleRate, 0);
-    voice.setOscillator1Waveform (chardsp::NomadOscillatorWaveform::sine);
-    voice.setOscillator1Shape (0.0f);
-    voice.setOscillator1Level (1.0f);
-    voice.setOscillator2Level (0.0f);
-    voice.setNoiseLevel (0.0f);
-    voice.setAttack (0.01f);
-    voice.setDecay (0.1f);
-    voice.setSustain (0.7f);
-    voice.setRelease (0.3f);
-    voice.setFilter (chardsp::FilterMode::lowpass, 9000.0f, 0.8f);
+    struct SineVoice
+    {
+        void prepare (float newSampleRate) noexcept
+        {
+            oscillator.prepare (newSampleRate);
+            oscillator.reset();
+            envelope.prepare (newSampleRate);
+            envelope.setAttack (0.01f);
+            envelope.setDecay (0.1f);
+            envelope.setSustain (0.7f);
+            envelope.setRelease (0.3f);
+        }
+
+        void start (float pitch, float nextVelocity) noexcept
+        {
+            setPitch (pitch);
+            oscillator.reset();
+            velocity = std::clamp (nextVelocity, 0.0f, 1.0f);
+            envelope.trigger();
+        }
+
+        void setPitch (float pitch) noexcept
+        {
+            oscillator.setFrequency (440.0f * std::exp2 ((pitch - 69.0f) / 12.0f));
+        }
+
+        void setVelocity (float nextVelocity) noexcept
+        {
+            velocity = std::clamp (nextVelocity, 0.0f, 1.0f);
+        }
+
+        void release() noexcept { envelope.release(); }
+
+        float next() noexcept
+        {
+            return envelope.isActive() ? oscillator.next() * envelope.next() * velocity
+                                       : 0.0f;
+        }
+
+        chardsp::SineOscillator<float> oscillator;
+        chardsp::ADSREnvelope<float> envelope;
+        float velocity = 0.0f;
+    } voice;
+    voice.prepare (sampleRate);
 
     const auto apply = [&] (const Controller::Action& action)
     {

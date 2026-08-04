@@ -1,19 +1,54 @@
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 
-#include "chardsp/chardsp_BasicSynthVoice.h"
+#include "chardsp/chardsp_ADSREnvelope.h"
+#include "chardsp/chardsp_Oscillator.h"
 #include "chardsp/chardsp_VoicePool.h"
 #include "choc/audio/choc_AudioFileFormat_WAV.h"
 #include "choc/audio/choc_SampleBuffers.h"
 
 namespace
 {
-struct Voice : chardsp::BasicSynthVoice<float>
+struct Voice
 {
+    void prepare (float sampleRate, size_t) noexcept
+    {
+        oscillator.prepare (sampleRate);
+        oscillator.reset();
+        envelope.prepare (sampleRate);
+        envelope.setAttack (0.005f);
+        envelope.setDecay (0.08f);
+        envelope.setSustain (0.65f);
+        envelope.setRelease (0.25f);
+        velocity = 0.0f;
+    }
+
     void start (const int& note, float velocity) noexcept
     {
-        BasicSynthVoice::start (static_cast<float> (note), velocity);
+        oscillator.setFrequency (440.0f * std::exp2 (
+            (static_cast<float> (note) - 69.0f) / 12.0f));
+        oscillator.reset();
+        this->velocity = std::clamp (velocity, 0.0f, 1.0f);
+        envelope.trigger();
     }
+
+    void release() noexcept { envelope.release(); }
+    void forceRelease (float seconds) noexcept { envelope.forceRelease (seconds); }
+    bool isAvailable() const noexcept { return ! envelope.isActive(); }
+    void setRelease (float seconds) noexcept { envelope.setRelease (seconds); }
+
+    float next() noexcept
+    {
+        return envelope.isActive() ? oscillator.next() * envelope.next() * velocity
+                                   : 0.0f;
+    }
+
+private:
+    float velocity = 0.0f;
+    chardsp::SineOscillator<float> oscillator;
+    chardsp::ADSREnvelope<float> envelope;
 };
 }
 
@@ -29,19 +64,7 @@ int main (int argc, const char* const* argv)
     voices.setStealFadeTime (0.002f);
 
     for (size_t i = 0; i < 2; ++i)
-    {
-        auto& voice = voices.getVoice (i);
-        voice.setOscillator1Waveform (chardsp::NomadOscillatorWaveform::sine);
-        voice.setOscillator1Shape (0.0f);
-        voice.setOscillator1Level (1.0f);
-        voice.setOscillator2Level (0.0f);
-        voice.setNoiseLevel (0.0f);
-        voice.setAttack (0.005f);
-        voice.setDecay (0.08f);
-        voice.setSustain (0.65f);
-        voice.setRelease (0.25f);
-        voice.setFilter (chardsp::FilterMode::lowpass, 8000.0f, 0.8f);
-    }
+        voices.getVoice (i).setRelease (0.25f);
 
     choc::buffer::ChannelArrayBuffer<float> buffer (2, frames);
     auto output = buffer.getView();

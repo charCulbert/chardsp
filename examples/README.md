@@ -6,7 +6,7 @@ type is visible in one place.
 
 | Target | Demonstrates | Output |
 |---|---|---|
-| `chardsp_oscillators` | Naive, PolyBLEP, elliptic, and Nomad oscillator choices | WAV |
+| `chardsp_oscillators` | Naive, PolyBLEP, and elliptic oscillator choices | WAV |
 | `chardsp_adsr` | ADSR stages and velocity-scaled envelope level | WAV |
 | `chardsp_filter` | Lowpass, bandpass, and highpass SVF modes | WAV |
 | `chardsp_noise` | Brown, pink, white, and blue noise | WAV |
@@ -15,8 +15,9 @@ type is visible in one place.
 | `chardsp_oversampler` | Signalsmith-backed 4x nonlinear block processing | WAV |
 | `chardsp_voice_pool` | Two voices, release-aware stealing, and pending starts | WAV + trace |
 | `chardsp_mono_portamento` | Last-note priority, legato, and portamento | WAV |
-| `chardsp_basic_synth_voice` | Complete voice integration | WAV |
+| `chardsp_basic_synth_voice` | Polyphonic two-oscillator generic synth using `VoicePool` | WAV |
 | `chardsp_buffer_render` | Focused elliptic saw plus gain smoothing | WAV |
+| `chardsp_demo_runner` | Interactive component demos with state-relevant controls | Audio device |
 
 Build everything:
 
@@ -30,4 +31,11 @@ Every audio example accepts an optional output path. For example:
 ```sh
 ./build/examples/adsr/chardsp_adsr adsr.wav
 ./build/examples/voicePool/chardsp_voice_pool stealing.wav
+```
+
+The live DemoRunner provides interactive versions of these component examples.
+On macOS, run it with:
+
+```sh
+./build/examples/demoRunner/chardsp_demo_runner
 ```

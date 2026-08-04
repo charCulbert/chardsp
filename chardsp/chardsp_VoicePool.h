@@ -55,7 +55,6 @@ struct VoicePool
         voiceStates = {};
         pendingStarts = {};
         sustainActive = false;
-        nextAge = 1;
 
         for (size_t i = 0; i < voiceCount; ++i)
             voices[i].prepare (sampleRate, i);
@@ -126,10 +125,13 @@ struct VoicePool
             releaseSustainedVoices();
     }
 
-    void allKeysOff() noexcept
+    // Releases every active voice normally. Pending starts and sustain are
+    // cleared so no voice remains gated after the release begins.
+    void releaseAll() noexcept
     {
         pendingStarts = {};
         sustainActive = false;
+        nextAge = 1;
 
         for (size_t i = 0; i < voiceCount; ++i)
         {
@@ -143,10 +145,12 @@ struct VoicePool
         }
     }
 
-    void forceReleaseAll (SampleType seconds = defaultStealFadeSeconds) noexcept
+    // Immediately silences every voice and clears all allocation state.
+    void reset() noexcept
     {
         pendingStarts = {};
         sustainActive = false;
+        nextAge = 1;
 
         for (size_t i = 0; i < voiceCount; ++i)
         {
@@ -155,17 +159,8 @@ struct VoicePool
             if (! state.allocated && voices[i].isAvailable())
                 continue;
 
-            voices[i].forceRelease (seconds);
-
-            if (state.allocated)
-            {
-                state.keyHeld = false;
-                state.gate = false;
-                state.releasing = true;
-
-                if (voices[i].isAvailable())
-                    state = {};
-            }
+            voices[i].forceRelease (SampleType {});
+            state = {};
         }
     }
 

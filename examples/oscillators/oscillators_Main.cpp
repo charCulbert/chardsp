@@ -4,7 +4,6 @@
 #include <iostream>
 #include <string_view>
 
-#include "chardsp/chardsp_NomadOscillators.h"
 #include "chardsp/chardsp_Oscillator.h"
 #include "choc/audio/choc_AudioFileFormat_WAV.h"
 #include "choc/audio/choc_SampleBuffers.h"
@@ -63,11 +62,10 @@ bool writeWav (const std::filesystem::path& path,
 
 int main (int argc, const char* const* argv)
 {
-    constexpr std::array<std::string_view, 11> labels {
+    constexpr std::array<std::string_view, 10> labels {
         "naive saw", "naive pulse", "naive triangle", "sine",
         "PolyBLEP saw", "PolyBLEP pulse", "PolyBLEP triangle",
-        "elliptic saw", "elliptic pulse", "elliptic triangle",
-        "Nomad shaped saw"
+        "elliptic saw", "elliptic pulse", "elliptic triangle"
     };
     choc::buffer::ChannelArrayBuffer<float> buffer (
         2, segmentFrames * static_cast<uint32_t> (labels.size()));
@@ -85,7 +83,6 @@ int main (int argc, const char* const* argv)
     chardsp::EllipticSawOscillator<float> ellipticSaw;
     chardsp::EllipticPulseOscillator<float> ellipticPulse;
     chardsp::EllipticTriangleOscillator<float> ellipticTriangle;
-    chardsp::NomadOscillator<float> nomad;
     naivePulse.setPulseWidth (0.35f);
     polyPulse.setPulseWidth (0.35f);
     ellipticPulse.setPulseWidth (0.35f);
@@ -105,13 +102,6 @@ int main (int argc, const char* const* argv)
     render (ellipticSaw);
     render (ellipticPulse);
     render (ellipticTriangle);
-    nomad.prepare (sampleRate);
-    nomad.setFrequency (220.0f);
-    nomad.setWaveform (chardsp::NomadOscillatorWaveform::saw);
-    nomad.setShape (0.5f);
-    nomad.reset();
-    renderPreparedSegment (nomad, output, segment++ * segmentFrames);
-
     const std::filesystem::path path = argc > 1
         ? argv[1] : "chardsp_oscillators.wav";
 

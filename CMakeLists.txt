@@ -31,7 +31,7 @@ endif()
 
 add_library(chardsp INTERFACE)
 target_include_directories(chardsp INTERFACE
-    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CHARDSP_CHOC_DIR}"
     "${CHARDSP_ELLIPTIC_BLEP_DIR}"
     "${CHARDSP_SIGNALSMITH_DSP_DIR}/include")

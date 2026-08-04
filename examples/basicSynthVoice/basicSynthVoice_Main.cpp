@@ -2,44 +2,77 @@
 #include <iostream>
 
 #include "chardsp/chardsp_BasicSynthVoice.h"
+#include "chardsp/chardsp_VoicePool.h"
 #include "choc/audio/choc_AudioFileFormat_WAV.h"
 #include "choc/audio/choc_SampleBuffers.h"
+
+namespace
+{
+struct Voice : chardsp::BasicSynthVoice<float>
+{
+    void start (const int& note, float velocity) noexcept
+    {
+        chardsp::BasicSynthVoice<float>::start (
+            static_cast<float> (note), velocity);
+    }
+};
+}
 
 int main (int argc, const char* const* argv)
 {
     constexpr float sampleRate = 48000.0f;
-    constexpr uint32_t frames = 3 * 48000;
+    constexpr uint32_t frames = 4 * 48000;
     const std::filesystem::path path = argc > 1
         ? argv[1] : "chardsp_basic_synth_voice.wav";
 
-    chardsp::BasicSynthVoice<float> voice;
-    voice.prepare (sampleRate, 0);
-    voice.setOscillator1Waveform (chardsp::NomadOscillatorWaveform::saw);
-    voice.setOscillator1Shape (0.2f);
-    voice.setOscillator1Level (0.7f);
-    voice.setOscillator2Waveform (chardsp::NomadOscillatorWaveform::sine);
-    voice.setOscillator2Shape (0.0f);
-    voice.setOscillator2Level (0.25f);
-    voice.setNoiseColor (chardsp::NoiseColor::pink);
-    voice.setNoiseLevel (0.03f);
-    voice.setAttack (0.02f);
-    voice.setDecay (0.3f);
-    voice.setSustain (0.55f);
-    voice.setRelease (0.8f);
-    voice.setFilter (chardsp::FilterMode::lowpass, 2400.0f, 1.1f);
-    voice.setVelocitySensitivity (1.0f);
-    voice.setVelocityCurve (1.0f);
-    voice.start (57.0f, 0.75f);
+    chardsp::VoicePool<Voice, 4, int> voices;
+    voices.prepare (sampleRate);
+    voices.setStealFadeTime (0.002f);
+
+    for (size_t index = 0; index < 4; ++index)
+    {
+        auto& voice = voices.getVoice (index);
+        voice.setOscillator1Waveform (chardsp::BasicSynthWaveform::saw);
+        voice.setOscillator1Level (0.75f);
+        voice.setOscillator2Waveform (chardsp::BasicSynthWaveform::triangle);
+        voice.setOscillator2Level (0.25f);
+        voice.setNoiseLevel (0.015f);
+        voice.setAttack (0.01f);
+        voice.setDecay (0.18f);
+        voice.setSustain (0.62f);
+        voice.setRelease (0.45f);
+        voice.setFilter (chardsp::FilterMode::lowpass, 4200.0f, 0.8f);
+    }
 
     choc::buffer::ChannelArrayBuffer<float> buffer (2, frames);
     auto output = buffer.getView();
 
     for (uint32_t frame = 0; frame < frames; ++frame)
     {
-        if (frame == 2 * 48000)
-            voice.release();
+        if (frame == 0)
+            voices.start (60, 0.8f);
+        else if (frame == 12000)
+            voices.start (64, 0.75f);
+        else if (frame == 24000)
+            voices.start (67, 0.9f);
+        else if (frame == 36000)
+            voices.start (72, 0.8f);
+        else if (frame == 72000)
+            voices.stop (60);
+        else if (frame == 84000)
+            voices.stop (64);
+        else if (frame == 96000)
+            voices.stop (67);
+        else if (frame == 108000)
+            voices.stop (72);
+        else if (frame == 132000)
+            voices.start (76, 0.85f);
+        else if (frame == 144000)
+            voices.start (79, 0.85f);
+        else if (frame == 156000)
+            voices.start (83, 0.85f);
 
-        const auto sample = voice.next() * 0.25f;
+        const auto sample = voices.next() * 0.18f;
         for (uint32_t channel = 0; channel < output.getNumChannels(); ++channel)
             output.getSample (channel, frame) = sample;
     }
@@ -59,5 +92,5 @@ int main (int argc, const char* const* argv)
         return 1;
     }
 
-    std::cout << "Wrote " << path << '\n';
+    std::cout << "Wrote " << path << "\n";
 }

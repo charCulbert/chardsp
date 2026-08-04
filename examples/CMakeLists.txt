@@ -9,3 +9,7 @@ add_subdirectory(oversampler)
 add_subdirectory(voicePool)
 add_subdirectory(monoPortamento)
 add_subdirectory(basicSynthVoice)
+
+if (APPLE)
+    add_subdirectory(demoRunner)
+endif()

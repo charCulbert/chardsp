@@ -3,8 +3,8 @@
 `chardsp` is a small header-only collection of audio DSP primitives. It
 contains fixed delay, gain/crossfade and smoothing utilities, DC/SVF/biquad
 filters, peak/RMS/envelope detectors, caller-owned sample playback,
-naive/PolyBLEP/elliptic oscillator families, a separate five-waveform Nomad
-oscillator, an ADSR envelope, colored noise, a specialized 4x downsampler,
+naive/PolyBLEP/elliptic oscillator families, an ADSR envelope, colored noise,
+a specialized 4x downsampler,
 complete 2x/4x oversampling, release-aware voice-slot management, and
 protocol-neutral mono/legato/portamento policy. It uses CHOC views directly in
 block-oriented callers.
@@ -66,7 +66,6 @@ Include headers directly:
 #include "chardsp/chardsp_SamplePlayer.h"
 #include "chardsp/chardsp_Oversampler.h"
 #include "chardsp/chardsp_Oscillator.h"
-#include "chardsp/chardsp_NomadOscillators.h"
 #include "chardsp/chardsp_ADSREnvelope.h"
 #include "chardsp/chardsp_BasicSynthVoice.h"
 #include "chardsp/chardsp_StateVariableFilter.h"
@@ -133,18 +132,16 @@ There are no float-default or `Double` compatibility aliases.
   scratch allocation occurs in `prepare()`. Signalsmith types remain private
   implementation details.
 
-## Nomad-derived primitives
+## Composed primitives
 
-The following self-contained primitives preserve the active DSP equations from
-`daisy-nomad` commit `bab6bd92f13893a5e46fd2df3d38de1991b10962`. They add no
-Daisy or Nomad runtime dependency, allocate no memory, and can each be included
-independently.
+These self-contained primitives allocate no memory during rendering and can
+each be included independently.
 
 - `ADSREnvelope<SampleType>` provides finite-time exponential and linear attack, decay, and
   release stages. Stage-time, sustain, and shape changes take effect from the
   current level; `retrigger()` is discontinuity-free, while `trigger()` starts
-  from zero. `forceRelease(seconds)` is a configurable linear fade. The peak is
-  fixed at `1.0`; velocity curves and output scaling belong in the consumer.
+  from zero. The peak is fixed at `1.0`; velocity curves and output scaling
+  belong in the consumer.
 - `StateVariableFilter<SampleType>` is the two-integrator-loop TPT topology
   with selectable `FilterMode::lowpass`, `FilterMode::bandpass`, and
   `FilterMode::highpass` output. `processAll()` also returns lowpass, bandpass,
@@ -176,16 +173,9 @@ independently.
   pulse classes expose pulse width. Every class has the same `prepare()`,
   `reset()`, `setFrequency()`, `getFrequency()`, `advance()`, and `next()`
   lifecycle. None oversamples internally.
-- `NomadOscillator<SampleType>` in `chardsp_NomadOscillators.h` preserves
-  Nomad's combined `saw`, `ramp`, `pulse`, shaped/folded `triangle`, and
-  shaped/folded `sine` interface. Its shape semantics and internal 4x path are
-  intentionally isolated here rather than being properties of a generic
-  oscillator. Noise remains a separate `ColoredNoise` source. Hard sync,
-  micro-drift, two-oscillator routing, and physical models remain higher-level
-  policy.
 - `VoicePool<Voice, voiceCount, Key>` owns a fixed array of the consumer's
   `Voice` type and presents the protocol-neutral API `prepare()`, `start()`,
-  `stop()`, `setSustain()`, `allKeysOff()`, and `next()`. `Key` is a small
+  `stop()`, `setSustain()`, `releaseAll()`, `reset()`, and `next()`. `Key` is a small
   caller-defined identity: it can be a MIDI note/channel pair, an analog input
   pin plus pitch, or a sequencer token. The pool stores only its voice slots,
   so its memory does not grow with the possible key domain and there is no
@@ -206,18 +196,15 @@ independently.
   frame and owns its available-state fast path; it can return zero immediately
   or advance a free-running source first. No base class, virtual call, or
   runtime allocation is introduced.
-- `BasicSynthVoice<SampleType>` composes two `NomadOscillator` instances and
-  colored noise into an ADSR and LP/BP/HP filter. It accepts fractional
-  semitone pitch and velocity directly. Velocity scales the normalized ADSR
-  level in the voice, following the same separation used by JUCE's ADSR and
-  synthesiser voices. `setVelocitySensitivity()` blends from fixed level to
-  full velocity response; `setVelocityCurve()` selects a power exponent where
-  `1` is linear, values below `1` lift softer notes, and values above `1`
-  increase dynamic contrast. The voice exposes its other component parameters
-  and implements the `release()`, forced-fade, availability, and `next()` side
-  of the `VoicePool` contract. A tiny consumer wrapper maps its own input-key
-  type to pitch, keeping MIDI and hardware scanning out of the DSP class.
-- `MonoVoiceController<SampleType, Key, heldCapacity>` implements Nomad's
+- `BasicSynthVoice<SampleType>` is a deliberately small fixed topology built
+  from public components: two independently selectable PolyBLEP saw, pulse,
+  triangle, or sine oscillators, optional coloured noise, ADSR, and a
+  lowpass/bandpass/highpass state-variable filter. It accepts fractional
+  semitone pitch and velocity, exposes mixer, pulse-width, envelope, filter,
+  noise-colour, and velocity-response controls, and satisfies `VoicePool`'s
+  voice contract. Drift and product-specific oscillator policy remain
+  consumer concerns.
+- `MonoVoiceController<SampleType, Key, heldCapacity>` implements a
   last-note-priority monophonic policy without owning a DSP voice or knowing
   about MIDI. It returns simple pitch/release actions for the consumer to
   apply. Legato suppresses envelope retriggers while the gate is active and
@@ -225,9 +212,9 @@ independently.
   notes. Sustain, fallback to the newest still-held key, and off/always/
   fingered `PortamentoMode` choices are included. The held-key capacity is an
   explicit compile-time choice instead of a hidden 16- or 32-note limit.
-- `Portamento<SampleType>` interpolates in semitone pitch space with Nomad's
-  exact linear-to-analog shape curve. `setTimeRateMorph(0)` gives constant
-  time, `setTimeRateMorph(1)` gives constant time per octave, and intermediate
+- `Portamento<SampleType>` interpolates in semitone pitch space with a
+  linear-to-exponential shape curve. `setTimeRateMorph(0)` gives constant
+  time, `setTimeRateMorph(1)` gives constant rate, and intermediate
   values continuously blend those policies. Pitch-to-frequency conversion and
   pitch bend remain consumer concerns, so bend can be applied after glide.
 
@@ -244,18 +231,16 @@ cmake --build build
 ```
 
 See [the example catalog](examples/README.md) for small, one-file programs that
-demonstrate each oscillator family, ADSR and velocity scaling, every filter and
-noise mode, fixed feedback delay, complete oversampling, explicit specialized
-4x downsampling, voice stealing, mono portamento, and a complete basic voice.
-The component examples come before the integrated voice so each policy remains
-easy to find and copy.
+demonstrate each oscillator family, ADSR behavior, every filter and noise mode,
+fixed feedback delay, complete oversampling, explicit specialized 4x
+downsampling, voice stealing, mono portamento, and a polyphonic basic synth.
 
 `bufferRender` remains the focused two-second elliptic-BLEP saw example. It
 applies explicit fade-in and fade-out smoothing, and uses CHOC's WAV writer to
 create a 48 kHz, 16-bit stereo file. The output path is optional and defaults
 to `chardsp_render.wav`.
 
-The test executable uses CHOC's unit-test framework and includes Nomad parity
+The test executable uses CHOC's unit-test framework and includes reference
 vectors, float/double instantiation, filter/detector response checks, delay and
 playback boundaries, multi-translation-unit linkage, allocation checks,
 oversampling latency/passband/stopband/nonlinear alias measurements, and

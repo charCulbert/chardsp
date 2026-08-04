@@ -9,8 +9,8 @@
 namespace chardsp
 {
 
-// Nomad-style portamento in semitone pitch space. A time/rate morph of zero
-// gives constant-time glides; one gives a constant time per octave.
+// Semitone-space portamento. A time/rate morph of zero
+// gives constant-time glides; one gives a constant pitch-travel rate.
 template <typename SampleType>
 struct Portamento
 {
@@ -84,13 +84,13 @@ struct Portamento
             const auto t = std::clamp (glidePosition / glideSamples,
                                        SampleType {},
                                        static_cast<SampleType> (1));
-            const auto analogStrength = static_cast<SampleType> (1)
-                                      + shape * static_cast<SampleType> (5);
-            const auto analog = (static_cast<SampleType> (1)
-                                 - std::exp (-analogStrength * t))
-                              / (static_cast<SampleType> (1)
-                                 - std::exp (-analogStrength));
-            const auto curved = t + (analog - t) * shape;
+            const auto curveStrength = static_cast<SampleType> (1)
+                                     + shape * static_cast<SampleType> (5);
+            const auto exponential = (static_cast<SampleType> (1)
+                                      - std::exp (-curveStrength * t))
+                                   / (static_cast<SampleType> (1)
+                                      - std::exp (-curveStrength));
+            const auto curved = t + (exponential - t) * shape;
             currentPitch = startPitch
                          + (targetPitch - startPitch) * curved;
             glidePosition += static_cast<SampleType> (1);
