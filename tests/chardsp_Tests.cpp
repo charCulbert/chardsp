@@ -11,6 +11,7 @@
 #include <type_traits>
 
 #include "chardsp/chardsp_ADSREnvelope.h"
+#include "chardsp/chardsp_AllpassDiffuser.h"
 #include "chardsp/chardsp_BasicSynthVoice.h"
 #include "chardsp/chardsp_Biquad.h"
 #include "chardsp/chardsp_ColoredNoise.h"
@@ -18,10 +19,12 @@
 #include "chardsp/chardsp_DelayLine.h"
 #include "chardsp/chardsp_Detectors.h"
 #include "chardsp/chardsp_EllipticBLEP.h"
+#include "chardsp/chardsp_FractionalDelayLine.h"
 #include "chardsp/chardsp_Gain.h"
 #include "chardsp/chardsp_MonoVoiceController.h"
 #include "chardsp/chardsp_Oscillator.h"
 #include "chardsp/chardsp_OscillatorEvents.h"
+#include "chardsp/chardsp_OnePole.h"
 #include "chardsp/chardsp_OscillatorPhase.h"
 #include "chardsp/chardsp_Oversampler.h"
 #include "chardsp/chardsp_Portamento.h"
@@ -153,6 +156,297 @@ void testDelayLineAndCrossfade (choc::test::TestProgress& progress)
     }
 
     CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
+}
+
+void testFractionalDelayLine (choc::test::TestProgress& progress)
+{
+    chardsp::FractionalDelayLine<float> unprepared;
+    CHOC_EXPECT_EQ (unprepared.getMaximumDelay(), 0);
+    unprepared.write (1.0f);
+    CHOC_EXPECT_NEAR (unprepared.read(), 0.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (unprepared.read (10), 0.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (unprepared.readCubic (2.5f), 0.0f, 0.000001f);
+
+    chardsp::FractionalDelayLine<float> line;
+    line.prepare (64);
+    CHOC_EXPECT_EQ (line.getMaximumDelay(), 64);
+    line.setDelay (10.0f);
+
+    for (int i = 0; i < 32; ++i)
+        CHOC_EXPECT_NEAR (line.process (i == 0 ? 1.0f : 0.0f),
+                          i == 10 ? 1.0f : 0.0f, 0.000001f);
+
+    // Catmull-Rom reproduces a ramp exactly; the newest sample has delay zero.
+    line.reset();
+
+    for (int i = 0; i < 200; ++i)
+        line.write (static_cast<float> (i));
+
+    CHOC_EXPECT_NEAR (line.readCubic (10.25f), 188.75f, 0.001f);
+    CHOC_EXPECT_NEAR (line.readCubic (0.0f), 199.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (line.read (1), 198.0f, 0.000001f);
+
+    constexpr double sampleRate = 48000.0;
+    constexpr double frequency = 1000.0;
+    constexpr double omega = 6.28318530717958647692 * frequency / sampleRate;
+    chardsp::FractionalDelayLine<float> floatSine;
+    chardsp::FractionalDelayLine<double> doubleSine;
+    floatSine.prepare (256);
+    doubleSine.prepare (256);
+
+    for (int i = 0; i < 4096; ++i)
+    {
+        const auto sample = std::sin (omega * static_cast<double> (i));
+        floatSine.write (static_cast<float> (sample));
+        doubleSine.write (sample);
+    }
+
+    const auto expected = std::sin (omega * (4095.0 - 100.5));
+    const auto floatCubic = static_cast<double> (floatSine.readCubic (100.5f));
+    const auto floatLinear = 0.5 * (static_cast<double> (floatSine.read (100))
+                                  + static_cast<double> (floatSine.read (101)));
+    CHOC_EXPECT_TRUE (std::abs (floatCubic - expected) < 0.001);
+    CHOC_EXPECT_TRUE (std::abs (floatCubic - expected)
+                      < std::abs (floatLinear - expected));
+    // Kernel truncation rather than precision sets the floor at this frequency
+    // ratio, so double matches the float result instead of beating it.
+    CHOC_EXPECT_TRUE (std::abs (doubleSine.readCubic (100.5) - expected)
+                      < 0.00001);
+    CHOC_EXPECT_TRUE (std::abs (doubleSine.readCubic (100.5) - floatCubic)
+                      < 0.000001);
+
+    chardsp::FractionalDelayLine<float> wrap;
+    wrap.prepare (8);
+
+    for (int i = 0; i < 100; ++i)
+        wrap.write (static_cast<float> (i));
+
+    CHOC_EXPECT_NEAR (wrap.read (8), 91.0f, 0.000001f);
+    wrap.setDelay (8.0f);
+    CHOC_EXPECT_NEAR (wrap.read(), 91.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (wrap.readCubic (7.5f), 91.5f, 0.001f);
+
+    wrap.reset();
+    wrap.write (std::numeric_limits<float>::quiet_NaN());
+    CHOC_EXPECT_NEAR (wrap.read (0), 0.0f, 0.000001f);
+    wrap.write (std::numeric_limits<float>::infinity());
+    CHOC_EXPECT_NEAR (wrap.read (0), 0.0f, 0.000001f);
+    wrap.write (5.0f);
+    wrap.setDelay (std::numeric_limits<float>::quiet_NaN());
+    CHOC_EXPECT_NEAR (wrap.getDelay(), 0.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (wrap.read(), 5.0f, 0.000001f);
+    wrap.setDelay (100.0f);
+    CHOC_EXPECT_NEAR (wrap.getDelay(), 8.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (wrap.read (100), wrap.read (8), 0.000001f);
+
+    const auto allocationsBefore = allocationCount.load();
+    line.setDelay (10.5f);
+
+    for (int i = 0; i < 100000; ++i)
+        (void) line.process (static_cast<float> (i % 16));
+
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
+}
+
+void testAllpassDiffuser (choc::test::TestProgress& progress)
+{
+    chardsp::AllpassDiffuser<float> unprepared;
+    CHOC_EXPECT_NEAR (unprepared.process (0.25f), 0.25f, 0.000001f);
+
+    chardsp::AllpassDiffuser<float> pureDelay;
+    pureDelay.prepare (48000.0f, 20.0f);
+    pureDelay.setGain (0.0f);
+    CHOC_EXPECT_NEAR (pureDelay.getGain(), 0.0f, 0.000001f);
+    pureDelay.setStageDelay (0, 1.0f);
+    pureDelay.setStageDelay (1, 2.0f);
+    pureDelay.setStageDelay (2, 3.0f);
+    pureDelay.setStageDelay (3, 4.0f);
+    pureDelay.setStageDelay (4, 5.0f);
+    float peak = 0.0f;
+    int peakIndex = 0;
+    double absoluteSum = 0.0;
+
+    for (int i = 0; i < 1024; ++i)
+    {
+        const auto output = pureDelay.process (i == 0 ? 1.0f : 0.0f);
+        absoluteSum += std::abs (static_cast<double> (output));
+
+        if (std::abs (output) > peak)
+        {
+            peak = std::abs (output);
+            peakIndex = i;
+        }
+    }
+
+    CHOC_EXPECT_EQ (peakIndex, 480);
+    CHOC_EXPECT_NEAR (peak, 1.0f, 0.000001f);
+    CHOC_EXPECT_NEAR (absoluteSum, 1.0, 0.000001);
+
+    // A Schroeder stage is allpass, so its impulse response carries unit energy.
+    chardsp::AllpassDiffuser<float, 1> single;
+    single.prepare (48000.0f, 10.0f);
+    single.setStageDelay (0, 1.0f);
+    single.setGain (0.5f);
+    double singleEnergy = 0.0;
+
+    for (int i = 0; i < 960; ++i)
+    {
+        const auto output = single.process (i == 0 ? 1.0f : 0.0f);
+        singleEnergy += static_cast<double> (output) * output;
+    }
+
+    CHOC_EXPECT_NEAR (singleEnergy, 1.0, 0.001);
+
+    chardsp::AllpassDiffuser<float> whole;
+    whole.prepare (48000.0f, 20.0f);
+    whole.setStageDelay (0, 2.0f);
+    whole.setStageDelay (1, 5.0f);
+    whole.setStageDelay (2, 10.0f);
+    whole.setStageDelay (3, 15.0f);
+    whole.setGain (0.62f);
+    double wholeEnergy = 0.0;
+    float wholePeak = 0.0f;
+
+    for (int i = 0; i < 96000; ++i)
+    {
+        const auto output = whole.process (i == 0 ? 1.0f : 0.0f);
+        wholeEnergy += static_cast<double> (output) * output;
+        wholePeak = std::max (wholePeak, std::abs (output));
+    }
+
+    CHOC_EXPECT_NEAR (wholeEnergy, 1.0, 0.01);
+    CHOC_EXPECT_TRUE (wholePeak < 0.5f);
+
+    // Fractional stage delays interpolate, so they smear without staying allpass.
+    chardsp::AllpassDiffuser<float> diffuser;
+    diffuser.prepare (48000.0f, 20.0f);
+    diffuser.setStageDelay (0, 2.3f);
+    diffuser.setStageDelay (1, 5.1f);
+    diffuser.setStageDelay (2, 9.7f);
+    diffuser.setStageDelay (3, 15.3f);
+    diffuser.setGain (0.62f);
+    CHOC_EXPECT_NEAR (diffuser.getGain(), 0.62f, 0.000001f);
+    bool finite = true;
+    float diffuserPeak = 0.0f;
+
+    for (int i = 0; i < 96000; ++i)
+    {
+        const auto output = diffuser.process (i == 0 ? 1.0f : 0.0f);
+        finite = finite && std::isfinite (output);
+        diffuserPeak = std::max (diffuserPeak, std::abs (output));
+    }
+
+    CHOC_EXPECT_TRUE (finite);
+    CHOC_EXPECT_TRUE (diffuserPeak < 0.5f);
+    CHOC_EXPECT_TRUE (std::isfinite (diffuser.process (
+        std::numeric_limits<float>::quiet_NaN())));
+    diffuser.setGain (std::numeric_limits<float>::infinity());
+    CHOC_EXPECT_NEAR (diffuser.getGain(), 0.0f, 0.000001f);
+    diffuser.setGain (2.0f);
+    CHOC_EXPECT_NEAR (diffuser.getGain(), 0.98f, 0.000001f);
+    diffuser.setGain (-2.0f);
+    CHOC_EXPECT_NEAR (diffuser.getGain(), -0.98f, 0.000001f);
+    diffuser.setGain (0.62f);
+    diffuser.reset();
+
+    const auto allocationsBefore = allocationCount.load();
+
+    for (int i = 0; i < 100000; ++i)
+        (void) diffuser.process (std::sin (0.013f * static_cast<float> (i)));
+
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
+
+    chardsp::AllpassDiffuser<double, 2> doubleDiffuser;
+    doubleDiffuser.prepare (96000.0, 5.0);
+    doubleDiffuser.setStageDelay (0, 1.0);
+    doubleDiffuser.setStageDelay (1, 2.0);
+    doubleDiffuser.setGain (0.7);
+    CHOC_EXPECT_TRUE (std::isfinite (doubleDiffuser.process (1.0)));
+}
+
+void testOnePole (choc::test::TestProgress& progress)
+{
+    chardsp::OnePole<float> unprepared;
+    CHOC_EXPECT_NEAR (unprepared.getCutoff(), 1000.0f, 0.000001f);
+    CHOC_EXPECT_TRUE (unprepared.getMode() == chardsp::OnePoleMode::lowpass);
+    CHOC_EXPECT_TRUE (unprepared.process (1.0f) > 0.0f);
+
+    chardsp::OnePole<float> lowpass;
+    lowpass.prepare (48000.0f);
+    lowpass.setCutoff (1000.0f);
+    float output = 0.0f;
+
+    for (int i = 0; i < 2000; ++i)
+        output = lowpass.process (1.0f);
+
+    CHOC_EXPECT_NEAR (output, 1.0f, 0.0001f);
+
+    chardsp::OnePole<float> highpass;
+    highpass.prepare (48000.0f);
+    highpass.setMode (chardsp::OnePoleMode::highpass);
+    highpass.setCutoff (1000.0f);
+    CHOC_EXPECT_TRUE (highpass.getMode() == chardsp::OnePoleMode::highpass);
+
+    for (int i = 0; i < 2000; ++i)
+        output = highpass.process (1.0f);
+
+    CHOC_EXPECT_TRUE (std::abs (output) < 0.0001f);
+
+    const auto measurePeak = [] (chardsp::OnePole<float>& filter,
+                                 float frequency)
+    {
+        float result = 0.0f;
+
+        for (int i = 0; i < 8192; ++i)
+        {
+            const auto sample = filter.process (std::sin (
+                6.283185307179586f * frequency
+                * static_cast<float> (i) / 48000.0f));
+
+            if (i >= 4096)
+                result = std::max (result, std::abs (sample));
+        }
+
+        return result;
+    };
+
+    lowpass.reset();
+    CHOC_EXPECT_NEAR (measurePeak (lowpass, 1000.0f), 0.70710678f, 0.1f);
+    lowpass.setCutoff (20000.0f);
+    lowpass.reset();
+    CHOC_EXPECT_NEAR (measurePeak (lowpass, 1000.0f), 1.0f, 0.005f);
+
+    lowpass.setCutoff (-5.0f);
+    CHOC_EXPECT_NEAR (lowpass.getCutoff(), 1.0f, 0.000001f);
+    lowpass.setCutoff (1000000.0f);
+    CHOC_EXPECT_NEAR (lowpass.getCutoff(), 23520.0f, 0.01f);
+    lowpass.setCutoff (std::numeric_limits<float>::quiet_NaN());
+    CHOC_EXPECT_NEAR (lowpass.getCutoff(), 1000.0f, 0.000001f);
+    CHOC_EXPECT_TRUE (std::isfinite (lowpass.process (
+        std::numeric_limits<float>::infinity())));
+
+    lowpass.reset();
+    (void) lowpass.process (1.0f);
+
+    for (int i = 0; i < 2000; ++i)
+        output = lowpass.process (0.0f);
+
+    CHOC_EXPECT_TRUE (output == 0.0f);
+
+    const auto allocationsBefore = allocationCount.load();
+
+    for (int i = 0; i < 100000; ++i)
+        (void) lowpass.process (std::sin (0.013f * static_cast<float> (i)));
+
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
+
+    chardsp::OnePole<double> doublePole;
+    doublePole.prepare (96000.0);
+    doublePole.setMode (chardsp::OnePoleMode::highpass);
+    doublePole.setCutoff (50.0);
+    CHOC_EXPECT_TRUE (std::isfinite (doublePole.process (1.0)));
+    doublePole.prepare (std::numeric_limits<double>::quiet_NaN());
+    CHOC_EXPECT_NEAR (doublePole.getCutoff(), 50.0, 0.000001);
 }
 
 void testDCBlockerAndDetectors (choc::test::TestProgress& progress)
@@ -2263,6 +2557,9 @@ int main()
 
     { CHOC_TEST (smoothed_value); testSmoothedValue (progress); }
     { CHOC_TEST (delay_line_and_crossfade); testDelayLineAndCrossfade (progress); }
+    { CHOC_TEST (fractional_delay_line); testFractionalDelayLine (progress); }
+    { CHOC_TEST (allpass_diffuser); testAllpassDiffuser (progress); }
+    { CHOC_TEST (one_pole); testOnePole (progress); }
     { CHOC_TEST (dc_blocker_and_detectors); testDCBlockerAndDetectors (progress); }
     { CHOC_TEST (biquad); testBiquad (progress); }
     { CHOC_TEST (sample_player); testSamplePlayer (progress); }

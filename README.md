@@ -8,6 +8,8 @@ allocation-free during sample processing, and support `float` or `double`.
 - [`chardsp_ADSREnvelope.h`](chardsp/chardsp_ADSREnvelope.h) — finite-time
   ADSR with linear or exponential stages, live edits, continuous retriggering,
   a forced linear fade for voice stealing, and stage reporting.
+- [`chardsp_AllpassDiffuser.h`](chardsp/chardsp_AllpassDiffuser.h) — series
+  Schroeder allpass stages with millisecond stage delays and a shared gain.
 - [`chardsp_BasicSynthVoice.h`](chardsp/chardsp_BasicSynthVoice.h) —
   combines two selectable oscillators, pulse width, colored noise, ADSR, a
   lowpass/bandpass/highpass filter, and velocity response into a synth voice.
@@ -24,11 +26,16 @@ allocation-free during sample processing, and support `float` or `double`.
   attack/release envelope followers.
 - [`chardsp_EllipticBLEP.h`](chardsp/chardsp_EllipticBLEP.h) — Signalsmith
   correction state for fractional step and slope discontinuities.
+- [`chardsp_FractionalDelayLine.h`](chardsp/chardsp_FractionalDelayLine.h) —
+  runtime-capacity Catmull-Rom fractional delay with separate reads and writes
+  for feedback.
 - [`chardsp_Gain.h`](chardsp/chardsp_Gain.h) — linear and equal-power
   crossfades.
 - [`chardsp_MonoVoiceController.h`](chardsp/chardsp_MonoVoiceController.h) —
   last-note-priority note logic with legato grace, sustain, note fallback, and
   off, always, or fingered portamento actions.
+- [`chardsp_OnePole.h`](chardsp/chardsp_OnePole.h) — first-order lowpass or
+  highpass with an adjustable cutoff and a shared settled state.
 - [`chardsp_Oscillator.h`](chardsp/chardsp_Oscillator.h) — naive, PolyBLEP,
   and Signalsmith elliptic-BLEP saw, pulse, and triangle oscillators, plus
   sine, saw direction, and pulse width.
