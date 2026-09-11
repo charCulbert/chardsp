@@ -12,9 +12,11 @@ namespace chardsp
 {
 
 // Series of Schroeder allpass stages in the two-multiply form, the classic
-// diffuser. Stage delays are millisecond values converted at the prepared rate
-// and never fall below one sample; a gain of zero leaves a plain delay chain.
-// Before prepare, process returns its input untouched.
+// diffuser. Stage delays are millisecond values rounded to whole samples at the
+// prepared rate, because interpolated reads lose energy inside the recursion
+// and the stages are only allpass on the sample grid. Delays never fall below
+// one sample; a gain of zero leaves a plain delay chain. Before prepare,
+// process returns its input untouched.
 template <typename SampleType, size_t stages = 4>
 struct AllpassDiffuser
 {
@@ -52,9 +54,10 @@ struct AllpassDiffuser
         if (stage >= stages)
             return;
 
-        const auto samples = millisecondsToSamples (delayInMilliseconds);
-        lines[stage].setDelay (samples > static_cast<SampleType> (1)
-            ? samples - static_cast<SampleType> (1) : SampleType {});
+        const auto samples = static_cast<size_t> (
+            std::round (millisecondsToSamples (delayInMilliseconds)));
+        delays[stage] = std::min (samples > 1 ? samples - 1 : 0,
+                                  lines[stage].getMaximumDelay());
     }
 
     void setGain (SampleType newGain) noexcept
@@ -76,19 +79,20 @@ struct AllpassDiffuser
 
         if (gain == SampleType {})
         {
-            for (auto& line : lines)
+            for (size_t stage = 0; stage < stages; ++stage)
             {
-                const auto delayed = line.read();
-                line.write (sample);
+                const auto delayed = lines[stage].read (delays[stage]);
+                lines[stage].write (sample);
                 sample = delayed;
             }
 
             return sample;
         }
 
-        for (auto& line : lines)
+        for (size_t stage = 0; stage < stages; ++stage)
         {
-            const auto delayed = line.read();
+            auto& line = lines[stage];
+            const auto delayed = line.read (delays[stage]);
             auto stored = sample + gain * delayed;
             stored = std::abs (stored)
                     < static_cast<SampleType> (1.0e-20)
@@ -111,6 +115,7 @@ private:
     }
 
     std::array<FractionalDelayLine<SampleType>, stages> lines;
+    std::array<size_t, stages> delays {};
     SampleType sampleRate = static_cast<SampleType> (48000);
     SampleType gain = static_cast<SampleType> (0.5);
     bool prepared = false;

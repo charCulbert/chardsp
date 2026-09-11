@@ -297,27 +297,7 @@ void testAllpassDiffuser (choc::test::TestProgress& progress)
 
     CHOC_EXPECT_NEAR (singleEnergy, 1.0, 0.001);
 
-    chardsp::AllpassDiffuser<float> whole;
-    whole.prepare (48000.0f, 20.0f);
-    whole.setStageDelay (0, 2.0f);
-    whole.setStageDelay (1, 5.0f);
-    whole.setStageDelay (2, 10.0f);
-    whole.setStageDelay (3, 15.0f);
-    whole.setGain (0.62f);
-    double wholeEnergy = 0.0;
-    float wholePeak = 0.0f;
-
-    for (int i = 0; i < 96000; ++i)
-    {
-        const auto output = whole.process (i == 0 ? 1.0f : 0.0f);
-        wholeEnergy += static_cast<double> (output) * output;
-        wholePeak = std::max (wholePeak, std::abs (output));
-    }
-
-    CHOC_EXPECT_NEAR (wholeEnergy, 1.0, 0.01);
-    CHOC_EXPECT_TRUE (wholePeak < 0.5f);
-
-    // Fractional stage delays interpolate, so they smear without staying allpass.
+    // The prototype's stage times at full diffusion: still allpass, and smeared.
     chardsp::AllpassDiffuser<float> diffuser;
     diffuser.prepare (48000.0f, 20.0f);
     diffuser.setStageDelay (0, 2.3f);
@@ -326,17 +306,17 @@ void testAllpassDiffuser (choc::test::TestProgress& progress)
     diffuser.setStageDelay (3, 15.3f);
     diffuser.setGain (0.62f);
     CHOC_EXPECT_NEAR (diffuser.getGain(), 0.62f, 0.000001f);
-    bool finite = true;
+    double energy = 0.0;
     float diffuserPeak = 0.0f;
 
     for (int i = 0; i < 96000; ++i)
     {
         const auto output = diffuser.process (i == 0 ? 1.0f : 0.0f);
-        finite = finite && std::isfinite (output);
+        energy += static_cast<double> (output) * output;
         diffuserPeak = std::max (diffuserPeak, std::abs (output));
     }
 
-    CHOC_EXPECT_TRUE (finite);
+    CHOC_EXPECT_NEAR (energy, 1.0, 0.01);
     CHOC_EXPECT_TRUE (diffuserPeak < 0.5f);
     CHOC_EXPECT_TRUE (std::isfinite (diffuser.process (
         std::numeric_limits<float>::quiet_NaN())));
