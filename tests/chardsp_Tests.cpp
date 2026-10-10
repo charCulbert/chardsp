@@ -12,6 +12,7 @@
 
 #include "chardsp/chardsp_ADSREnvelope.h"
 #include "chardsp/chardsp_AllpassDiffuser.h"
+#include "chardsp/chardsp_AnalysisBuffer.h"
 #include "chardsp/chardsp_BasicSynthVoice.h"
 #include "chardsp/chardsp_Biquad.h"
 #include "chardsp/chardsp_ColoredNoise.h"
@@ -2665,6 +2666,164 @@ void testConstantQReadings (choc::test::TestProgress& progress)
     CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
 }
 
+void testAnalysisBuffer (choc::test::TestProgress& progress)
+{
+    chardsp::AnalysisBuffer<double> buffer;
+    CHOC_EXPECT_FALSE (buffer.prepare (0, 1024));
+    CHOC_EXPECT_FALSE (buffer.prepare (2, 0));
+    CHOC_EXPECT_TRUE (buffer.prepare (2, 1000));
+    CHOC_EXPECT_EQ (buffer.getCapacity(), 1024);
+    CHOC_EXPECT_EQ (buffer.getNumChannels(), 2);
+
+    // Pushes `count` samples of each of `channels` channels: channel c's
+    // sample at position n is n + 1000000 · c.
+    std::vector<std::vector<double>> scratch (6, std::vector<double> (4096));
+    uint32_t pushed = 0;
+    const auto push = [&] (chardsp::AnalysisBuffer<double>& into, int channels,
+                           int count)
+    {
+        const double* pointers[6];
+
+        for (int c = 0; c < channels; ++c)
+        {
+            auto& samples = scratch[static_cast<size_t> (c)];
+
+            for (int i = 0; i < count; ++i)
+                samples[static_cast<size_t> (i)] = pushed + i + 1000000.0 * c;
+
+            pointers[c] = samples.data();
+        }
+
+        into.push (pointers, channels, count);
+        pushed += static_cast<uint32_t> (count);
+    };
+
+    // Reads what was pushed up to the hop's end, from every channel.
+    std::vector<double> block (4096);
+    const auto readsBack = [&] (const chardsp::AnalysisBuffer<double>& from,
+                                int length)
+    {
+        bool same = true;
+
+        for (int c = 0; c < from.getNumChannels(); ++c)
+        {
+            from.read (c, length, block.data());
+
+            for (int i = 0; i < length; ++i)
+            {
+                const auto n = static_cast<int64_t> (from.getPosition())
+                             - length + i;
+                same = same && block[static_cast<size_t> (i)]
+                    == (n < 0 ? 0.0 : static_cast<double> (n) + 1000000.0 * c);
+            }
+        }
+
+        return same;
+    };
+
+    // Nothing until a block has arrived, then a hop at a time on its grid;
+    // nothing at all when a block and a hop don't fit in the ring.
+    buffer.restart (256);
+    push (buffer, 2, 500);
+    CHOC_EXPECT_FALSE (buffer.nextHop (512));
+    push (buffer, 2, 100);
+    CHOC_EXPECT_FALSE (buffer.nextHop (1024));
+    int hops = 0;
+
+    while (buffer.nextHop (512))
+    {
+        ++hops;
+        CHOC_EXPECT_EQ (buffer.getPosition(), static_cast<uint32_t> (256 * hops));
+        CHOC_EXPECT_EQ (buffer.getAdvanced(), 256u);
+        CHOC_EXPECT_EQ (buffer.getSkipped(), 0);
+        CHOC_EXPECT_TRUE (readsBack (buffer, 512));
+    }
+
+    CHOC_EXPECT_EQ (hops, 2);
+
+    // Wraps around a small ring in uneven pushes, read back after each, from
+    // 1, 2 and 6 channels.
+    for (int channels : { 1, 2, 6 })
+    {
+        CHOC_EXPECT_TRUE (buffer.prepare (channels, 64));
+        pushed = 0;
+        buffer.restart (16);
+        bool same = true;
+        int count = 0;
+
+        for (int round = 0; round < 200; ++round)
+        {
+            push (buffer, channels, 1 + (round * 7) % 13);
+
+            while (buffer.nextHop (32))
+                same = same && readsBack (buffer, 32)
+                    && buffer.getPosition() % 16 == 0, ++count;
+        }
+
+        CHOC_EXPECT_TRUE (same);
+        CHOC_EXPECT_EQ (count, static_cast<int> (pushed / 16));
+    }
+
+    // A reader that falls behind skips to the newest hops the ring still
+    // holds (here two), and says how far it moved.
+    CHOC_EXPECT_TRUE (buffer.prepare (1, 64));
+    pushed = 0;
+    buffer.restart (16);
+    push (buffer, 1, 160);
+    CHOC_EXPECT_TRUE (buffer.nextHop (32));
+    CHOC_EXPECT_EQ (buffer.getSkipped(), 8);
+    CHOC_EXPECT_EQ (buffer.getAdvanced(), 144u);
+    CHOC_EXPECT_TRUE (readsBack (buffer, 32));
+    CHOC_EXPECT_TRUE (buffer.nextHop (32));
+    CHOC_EXPECT_EQ (buffer.getPosition(), 160u);
+    CHOC_EXPECT_FALSE (buffer.nextHop (32));
+
+    // Or past `keep` hops, to the newest `keep`.
+    CHOC_EXPECT_TRUE (buffer.prepare (1, 8192));
+    pushed = 0;
+    buffer.restart (256);
+    push (buffer, 1, 1024);
+    uint32_t total = 0;
+    hops = 0;
+
+    while (buffer.nextHop (1024, 100))
+        total += buffer.getAdvanced(), ++hops;
+
+    CHOC_EXPECT_EQ (hops, 4);
+    push (buffer, 1, 256 * 20);
+    total = 0, hops = 0;
+
+    while (buffer.nextHop (1024, 4))
+        total += buffer.getAdvanced(), ++hops;
+
+    CHOC_EXPECT_EQ (hops, 4);
+    CHOC_EXPECT_EQ (total, 256u * 20);
+
+    // Restarting from a position starts the grid there; channels not pushed
+    // read as silence.
+    CHOC_EXPECT_TRUE (buffer.prepare (3, 1024));
+    pushed = 0;
+    push (buffer, 3, 100);
+    buffer.restart (10, 95);
+    push (buffer, 1, 10);
+    CHOC_EXPECT_TRUE (buffer.nextHop (20));
+    CHOC_EXPECT_EQ (buffer.getPosition(), 105u);
+    CHOC_EXPECT_EQ (buffer.getAdvanced(), 10u);
+    CHOC_EXPECT_FALSE (buffer.nextHop (20));
+    buffer.read (2, 10, block.data());
+    CHOC_EXPECT_EQ (block[0], 1000000.0 * 2 + 95.0);
+    CHOC_EXPECT_EQ (block[9], 0.0);
+
+    // Pushing and reading allocate nothing.
+    const auto allocationsBefore = allocationCount.load();
+    push (buffer, 3, 500);
+
+    while (buffer.nextHop (20))
+        buffer.read (1, 20, block.data());
+
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
+}
+
 void testConstantQStream (choc::test::TestProgress& progress)
 {
     using chardsp::ConstantQReading;
@@ -2816,6 +2975,7 @@ int main()
     { CHOC_TEST (svf_behavior); testStateVariableFilterBehavior (progress); }
     { CHOC_TEST (colored_noise_reference); testColoredNoiseParity (progress); }
     { CHOC_TEST (colored_noise_behavior); testColoredNoiseBehavior (progress); }
+    { CHOC_TEST (analysis_buffer); testAnalysisBuffer (progress); }
     { CHOC_TEST (constant_q_bands); testConstantQBands (progress); }
     { CHOC_TEST (constant_q_readings); testConstantQReadings (progress); }
     { CHOC_TEST (constant_q_stream); testConstantQStream (progress); }
