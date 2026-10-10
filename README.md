@@ -38,8 +38,6 @@ allocation-free during sample processing, and support `float` or `double`.
   writes for feedback.
 - [`chardsp_Detectors.h`](chardsp/chardsp_Detectors.h) — peak, RMS, and
   attack/release envelope followers.
-- [`chardsp_EllipticBLEP.h`](chardsp/chardsp_EllipticBLEP.h) — Signalsmith
-  correction state for fractional step and slope discontinuities.
 - [`chardsp_FractionalDelayLine.h`](chardsp/chardsp_FractionalDelayLine.h) —
   runtime-capacity Catmull-Rom fractional delay with separate reads and writes
   for feedback.

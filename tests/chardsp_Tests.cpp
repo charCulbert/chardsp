@@ -21,7 +21,6 @@
 #include "chardsp/chardsp_DCBlocker.h"
 #include "chardsp/chardsp_DelayLine.h"
 #include "chardsp/chardsp_Detectors.h"
-#include "chardsp/chardsp_EllipticBLEP.h"
 #include "chardsp/chardsp_FractionalDelayLine.h"
 #include "chardsp/chardsp_Gain.h"
 #include "chardsp/chardsp_MonoVoiceController.h"
@@ -1028,32 +1027,89 @@ void testOscillatorPhaseAndEllipticCorrection (
     CHOC_EXPECT_NEAR (advance.phase, 0.15f, 0.000001f);
     CHOC_EXPECT_NEAR (advance.wrapOffset, 0.4f, 0.000001f);
 
-    chardsp::EllipticBLEPCorrection<float> unprepared;
-    CHOC_EXPECT_NEAR (unprepared.process (0.25f), 0.25f, 0.000001f);
+    // The elliptic oscillators correct each step and slope jump with
+    // Signalsmith's elliptic BLEP, added (1 - offset) samples back, then its
+    // allpass: as a reference built here from Signalsmith's parts does.
+    struct Reference
+    {
+        signalsmith::blep::EllipticBlep<float> blep { 48000.0f };
+        signalsmith::blep::EllipticBlepAllpass<float> allpass;
+        float phase = 0.0f;
 
-    chardsp::EllipticBLEPCorrection<float> correction;
-    correction.prepare (48000.0f);
-    correction.beginSample();
-    correction.addStep (0.25f, 2.0f);
-    correction.addSlopeJump (0.75f, -0.1f);
+        float correct (float naive) { return allpass (naive + blep.get()); }
+    };
 
+    const float increment = 1234.5f / 48000.0f;
+    chardsp::EllipticSawOscillator<float> saw;
+    chardsp::EllipticTriangleOscillator<float> triangle;
+    saw.prepare (48000.0f);
+    triangle.prepare (48000.0f);
+    saw.setFrequency (1234.5f);
+    triangle.setFrequency (1234.5f);
+    chardsp::EllipticSawOscillator<float> fresh;
+    fresh.prepare (48000.0f);
+    fresh.setFrequency (1234.5f);
+    Reference sawReference, triangleReference;
     const auto allocationsBeforeRender = allocationCount.load();
+    bool sameSaw = true, sameTriangle = true;
     float peak = 0.0f;
 
-    for (int i = 0; i < 512; ++i)
+    for (int i = 0; i < 2000; ++i)
     {
-        const auto sample = correction.process (0.0f);
-        CHOC_EXPECT_TRUE (std::isfinite (sample));
-        peak = std::max (peak, std::abs (sample));
-        correction.beginSample();
+        auto& r = sawReference;
+        r.blep.step();
+        r.phase += increment;
+
+        if (r.phase >= 1.0f)
+        {
+            const auto past = (r.phase - 1.0f) / increment;
+            r.phase -= 1.0f;
+            r.blep.add (2.0f, 1, 1.0f - (1.0f - past));
+        }
+
+        const auto sawSample = saw.next();
+        sameSaw = sameSaw && std::abs (sawSample - r.correct (1.0f - 2.0f * r.phase))
+                             <= 0.000001f;
+        peak = std::max (peak, std::abs (sawSample));
+
+        auto& t = triangleReference;
+        const auto start = t.phase, end = start + increment;
+        t.blep.step();
+
+        if (start < 0.5f && end >= 0.5f)
+            t.blep.add (-8.0f * increment, 2,
+                        1.0f - (1.0f - (end - 0.5f) / increment));
+
+        if (end >= 1.0f)
+        {
+            t.blep.add (8.0f * increment, 2,
+                        1.0f - (1.0f - (end - 1.0f) / increment));
+            t.phase = end - 1.0f;
+        }
+        else
+        {
+            t.phase = end;
+        }
+
+        const auto naive = t.phase < 0.5f ? t.phase * 4.0f - 1.0f
+                                          : 3.0f - t.phase * 4.0f;
+        sameTriangle = sameTriangle
+            && std::abs (triangle.next() - t.correct (naive)) <= 0.000001f;
     }
 
-    CHOC_EXPECT_TRUE (peak > 0.01f);
+    CHOC_EXPECT_TRUE (sameSaw);
+    CHOC_EXPECT_TRUE (sameTriangle);
+    CHOC_EXPECT_TRUE (peak > 0.9f);
     CHOC_EXPECT_TRUE (allocationCount.load() == allocationsBeforeRender);
 
-    correction.reset();
-    correction.beginSample();
-    CHOC_EXPECT_TRUE (std::isfinite (correction.process (0.0f)));
+    // reset() clears the correction's history along with the phase.
+    saw.reset();
+    bool sameAsFresh = true;
+
+    for (int i = 0; i < 256; ++i)
+        sameAsFresh = sameAsFresh && saw.next() == fresh.next();
+
+    CHOC_EXPECT_TRUE (sameAsFresh);
 
     std::array<chardsp::PulseEdgeEvent<float>, 3> events {};
     size_t eventCount = 0;
@@ -1103,14 +1159,13 @@ void testOscillatorPhaseAndEllipticCorrection (
     movingPulse.reset (0.5f);
     movingPulse.setPulseWidth (0.6f);
 
-    chardsp::EllipticBLEPCorrection<float> movingReference;
-    movingReference.prepare (48000.0f);
-    movingReference.beginSample();
-    movingReference.addStep (0.5263158f, 2.0f);
+    Reference movingReference;
+    movingReference.blep.step();
+    movingReference.blep.add (2.0f, 1, 1.0f - 0.5263158f);
     const auto allocationsBeforeMovingRender = allocationCount.load();
 
     const auto movingSample = movingPulse.next();
-    const auto referenceSample = movingReference.process (1.0f);
+    const auto referenceSample = movingReference.correct (1.0f);
     const auto allocationsAfterMovingRender = allocationCount.load();
     CHOC_EXPECT_NEAR (movingSample, referenceSample, 0.000002f);
     CHOC_EXPECT_EQ (allocationsAfterMovingRender,
