@@ -2725,6 +2725,82 @@ void testConstantQColumns (choc::test::TestProgress& progress)
                 CHOC_EXPECT_TRUE (columns[c] > columns[c - 1]);
         }
     }
+
+    // A signal of any length in overlapping blocks reads as in one block
+    // holding all of it, in any reading and at any spacing: within 1e-7 of
+    // full scale (what the weights CiCueTea leaves out let in from the rest
+    // of the block), and so within 0.001 dB above -60 dB.
+    design.bandsPerOctave = 12.0;
+    design.minFrequency = 110.0;
+    design.maxFrequency = 4000.0;
+    const int64_t length = 96000;
+    std::vector<double> signal (static_cast<size_t> (length));
+    uint32_t noise = 1;
+
+    for (size_t i = 0; i < signal.size(); ++i)
+    {
+        noise = noise * 1664525u + 1013904223u;
+        signal[i] = 0.3 * std::sin (0.015 * i + 2.0e-7 * i * i)
+                  + 0.01 * (noise / 4294967296.0 - 0.5)
+                  + (i % 20011 == 0 ? 1.0 : 0.0);
+    }
+
+    const int64_t start = 1 << 16; // on every band's coefficient grid
+    design.blockSize = 1 << 18;
+    chardsp::ConstantQ<double> whole;
+    CHOC_EXPECT_TRUE (whole.prepare (design));
+    std::vector<double> one (static_cast<size_t> (design.blockSize), 0.0);
+    std::copy (signal.begin(), signal.end(), one.begin() + start);
+    whole.process (one.data());
+    const int bands = whole.getNumBands();
+
+    design.blockSize = 4 * chardsp::ConstantQ<double>::minimumBlockSize (
+        48000.0, 12.0, 110.0);
+    chardsp::ConstantQ<double> parts;
+    CHOC_EXPECT_TRUE (parts.prepare (design));
+
+    for (auto reading : { ConstantQReading::centre, ConstantQReading::peak,
+                          ConstantQReading::mean })
+        for (double spacing : { 240.0, 1000.0, 37.5 })
+        {
+            const auto columns = static_cast<int64_t> (length / spacing);
+            std::vector<double> expected (static_cast<size_t> (bands * columns));
+            std::vector<double> stitched (expected.size());
+
+            for (int b = 0; b < bands; ++b)
+                whole.getColumns (b, reading, static_cast<double> (start), spacing,
+                                  static_cast<int> (columns),
+                                  expected.data() + b * columns);
+
+            CHOC_EXPECT_TRUE (parts.getSignalColumns (signal.data(), length, reading,
+                                                      spacing, columns, stitched.data()));
+            double worst = 0.0, worstLoud = 0.0;
+
+            for (size_t i = 0; i < expected.size(); ++i)
+            {
+                worst = std::max (worst, std::abs (stitched[i] - expected[i]));
+
+                if (expected[i] > 1.0e-3)
+                    worstLoud = std::max (worstLoud, std::abs (
+                        decibels (stitched[i]) - decibels (expected[i])));
+            }
+
+            CHOC_EXPECT_TRUE (worst < 1.0e-7);
+            CHOC_EXPECT_TRUE (worstLoud < 0.001);
+        }
+
+    // A block too short for its margins gives nothing; columns allocate
+    // nothing.
+    std::vector<double> columns (static_cast<size_t> (bands * 400));
+    design.blockSize = 0;
+    chardsp::ConstantQ<double> shortest;
+    CHOC_EXPECT_TRUE (shortest.prepare (design));
+    CHOC_EXPECT_FALSE (shortest.getSignalColumns (signal.data(), length,
+        ConstantQReading::mean, 240.0, 400, columns.data()));
+    const auto allocationsBefore = allocationCount.load();
+    parts.getSignalColumns (signal.data(), length, ConstantQReading::mean, 240.0,
+                            400, columns.data());
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
 }
 
 void testAnalysisBuffer (choc::test::TestProgress& progress)

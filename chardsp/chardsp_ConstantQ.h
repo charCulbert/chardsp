@@ -98,7 +98,8 @@ enum class ConstantQReading
 // resampler's quality limiting precision.
 //
 // Like CiCueTea's, the transform treats the block as periodic: a whole file
-// analysed as one block wants silence padded at both ends.
+// analysed as one block wants silence padded at both ends. getSignalColumns()
+// analyses a signal of any length in overlapping blocks instead.
 //
 // prepare() allocates; the rest does not.
 template <typename SampleType>
@@ -238,6 +239,7 @@ public:
         spectrum.assign (static_cast<size_t> (size / 2 + 1), {});
         scratch.assign (static_cast<size_t> (longest), {});
         envelope.assign (static_cast<size_t> (longest), {});
+        padded.assign (static_cast<size_t> (size), SampleType {});
         return true;
     }
 
@@ -473,6 +475,73 @@ public:
         }
     }
 
+    // getColumns() over a signal of any length, as from one block holding all
+    // of it with silence either side (to within 1e-7 of full scale):
+    // numColumns columns `spacing` samples apart, the first centred on the
+    // signal's first sample, every band's into
+    // magnitudes[band · numColumns + column]. Overlapping blocks of
+    // getBlockSize() each give the columns their edges can't reach (six of
+    // the lowest band's spreads in), so memory doesn't grow with the signal.
+    // False, doing nothing, if the block is too short to give any; eight
+    // times minimumBlockSize() gives about 60% of each.
+    bool getSignalColumns (const SampleType* signal, int64_t length,
+                           ConstantQReading reading, double spacing,
+                           int64_t numColumns, SampleType* magnitudes) noexcept
+    {
+        if (! isValid() || ! (spacing > 0.0) || numColumns < 1)
+            return false;
+
+        // Blocks start on every band's coefficient grid, so each reads the
+        // same coefficients the one block would.
+        int64_t grid = 1;
+
+        for (const auto& band : bands)
+            grid = std::max (grid, static_cast<int64_t> (size / std::min (size,
+                std::max (band.readingLength, nextPowerOfTwo (static_cast<int64_t> (
+                    std::min (static_cast<double> (size),
+                              std::ceil (size / std::max (spacing, 1.0)))))))));
+
+        const double margin = 6.0 * bands[0].spread + spacing + grid;
+
+        if (static_cast<double> (size) < 2.0 * margin + grid)
+            return false;
+
+        for (int64_t column = 0; column < numColumns;)
+        {
+            const double time = column * spacing;
+            auto start = static_cast<int64_t> (std::floor ((time - margin) / grid))
+                       * grid;
+            const auto end = std::min (numColumns, static_cast<int64_t> (
+                std::floor ((static_cast<double> (start + size) - margin)
+                            / spacing)) + 1);
+
+            if (start >= 0 && start + size <= length)
+            {
+                process (signal + start);
+            }
+            else
+            {
+                for (int i = 0; i < size; ++i)
+                {
+                    const auto at = start + i;
+                    padded[static_cast<size_t> (i)] = at >= 0 && at < length
+                        ? signal[at] : SampleType {};
+                }
+
+                process (padded.data());
+            }
+
+            for (int b = 0; b < getNumBands(); ++b)
+                getColumns (b, reading, time - static_cast<double> (start),
+                            spacing, static_cast<int> (end - column),
+                            magnitudes + b * numColumns + column);
+
+            column = end;
+        }
+
+        return true;
+    }
+
 private:
     static constexpr double threshold = 1.0e-6; // CiCueTea's
     static constexpr double twoPi = 6.283185307179586476925286766559;
@@ -562,6 +631,7 @@ private:
     std::vector<double> frequencies;
     std::vector<SampleType> weights;
     std::vector<std::complex<SampleType>> spectrum, scratch, envelope;
+    std::vector<SampleType> padded; // getSignalColumns()' edge blocks
     signalsmith::fft::RealFFT<SampleType> transform;
     std::vector<signalsmith::fft::FFT<SampleType>> inverses;
 };

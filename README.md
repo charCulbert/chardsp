@@ -24,7 +24,8 @@ allocation-free during sample processing, and support `float` or `double`.
 - [`chardsp_ConstantQ.h`](chardsp/chardsp_ConstantQ.h) — constant-Q
   transform after CiCueTea's sparse NSGF-CQT: any bands per octave and
   tuning, complex coefficients per band at any time in a block of any power
-  of two, and centre, peak, or mean readings over a stretch.
+  of two, centre, peak, or mean readings over a stretch, and columns of a
+  signal of any length from overlapping blocks.
 - [`chardsp_ConstantQStream.h`](chardsp/chardsp_ConstantQStream.h) — a
   constant-Q spectrogram column of dB per band for each hop, from the newest
   block of one channel, with the high bands read from shorter blocks.
