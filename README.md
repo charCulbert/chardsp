@@ -26,8 +26,8 @@ allocation-free during sample processing, and support `float` or `double`.
   tuning, complex coefficients per band at any time in a block of any power
   of two, and centre, peak, or mean readings over a stretch.
 - [`chardsp_ConstantQStream.h`](chardsp/chardsp_ConstantQStream.h) — a
-  constant-Q spectrogram of a live stereo signal: a column of dB per hop,
-  with the high bands read from shorter blocks.
+  constant-Q spectrogram column of dB per band for each hop, from the newest
+  block of one channel, with the high bands read from shorter blocks.
 - [`chardsp_DCBlocker.h`](chardsp/chardsp_DCBlocker.h) — first-order DC
   removal with adjustable cutoff and bypass.
 - [`chardsp_DelayLine.h`](chardsp/chardsp_DelayLine.h) — fixed-capacity

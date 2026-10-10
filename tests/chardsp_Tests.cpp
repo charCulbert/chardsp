@@ -2835,32 +2835,53 @@ void testConstantQStream (choc::test::TestProgress& progress)
     const int hop = 1600;
     const int size = chardsp::ConstantQ<float>::minimumBlockSize (48000.0, 12.0, 55.0);
 
-    // The levels a stream shows for `input`: every column, as columns[band].
-    const auto run = [&] (const std::vector<float>& input, ConstantQReading reading)
+    // The levels a stream shows for each of `inputs` (a channel each): every
+    // column, as columns[channel][band].
+    using Columns = std::vector<std::vector<float>>;
+    const auto runAll = [&] (const std::vector<std::vector<float>>& inputs,
+                             ConstantQReading reading)
     {
+        const auto channels = static_cast<int> (inputs.size());
+        chardsp::AnalysisBuffer<float> buffer;
+        buffer.prepare (channels, 2 * size);
+        buffer.restart (hop);
         chardsp::ConstantQStream<float> stream;
-        stream.prepare (size);
         CHOC_EXPECT_TRUE (stream.configure (design, hop, reading));
+        CHOC_EXPECT_EQ (stream.getBlockSize(), size);
         const auto bands = static_cast<size_t> (stream.getTransform().getNumBands());
-        std::vector<std::vector<float>> columns (bands);
-        std::vector<float> column (bands);
-        uint32_t advanced = 0, total = 0;
+        std::vector<Columns> columns (inputs.size(), Columns (bands));
+        std::vector<float> block (static_cast<size_t> (size)), column (bands);
+        std::vector<const float*> pointers (inputs.size());
+        uint32_t total = 0;
 
-        for (size_t i = 0; i + 256 <= input.size(); i += 256)
+        for (size_t i = 0; i + 256 <= inputs[0].size(); i += 256)
         {
-            stream.push (input.data() + i, input.data() + i, 256);
+            for (size_t c = 0; c < inputs.size(); ++c)
+                pointers[c] = inputs[c].data() + i;
 
-            while (stream.next (column.data(), advanced, 1000))
+            buffer.push (pointers.data(), channels, 256);
+
+            while (buffer.nextHop (size, 1000))
             {
-                total += advanced;
+                total += buffer.getAdvanced();
 
-                for (size_t b = 0; b < bands; ++b)
-                    columns[b].push_back (column[b]);
+                for (int c = 0; c < channels; ++c)
+                {
+                    buffer.read (c, size, block.data());
+                    stream.process (block.data(), column.data());
+
+                    for (size_t b = 0; b < bands; ++b)
+                        columns[static_cast<size_t> (c)][b].push_back (column[b]);
+                }
             }
         }
 
-        CHOC_EXPECT_EQ (total, static_cast<uint32_t> (input.size() / hop * hop));
+        CHOC_EXPECT_EQ (total, static_cast<uint32_t> (inputs[0].size() / hop * hop));
         return columns;
+    };
+    const auto run = [&] (const std::vector<float>& input, ConstantQReading reading)
+    {
+        return runAll ({ input }, reading)[0];
     };
 
     chardsp::ConstantQ<float> bands;
@@ -2884,11 +2905,16 @@ void testConstantQStream (choc::test::TestProgress& progress)
         CHOC_EXPECT_EQ (band.back(), -160.0f);
 
     // A steady sine reads the same in all three.
-    std::vector<float> sine (silence.size());
+    const auto sineAt = [&] (double frequency)
+    {
+        std::vector<float> sine (silence.size());
 
-    for (size_t i = 0; i < sine.size(); ++i)
-        sine[i] = static_cast<float> (std::sin (6.283185307179586 * 4000.0 * i / 48000.0));
+        for (size_t i = 0; i < sine.size(); ++i)
+            sine[i] = static_cast<float> (std::sin (6.283185307179586 * frequency * i / 48000.0));
 
+        return sine;
+    };
+    const auto sine = sineAt (4000.0);
     const auto band = nearest (4000.0);
     const auto centre = run (sine, ConstantQReading::centre)[band].back();
     CHOC_EXPECT_NEAR (run (sine, ConstantQReading::peak)[band].back(), centre, 0.01f);
@@ -2909,19 +2935,56 @@ void testConstantQStream (choc::test::TestProgress& progress)
     CHOC_EXPECT_TRUE (loudest (ConstantQReading::peak) > -40.0f);
     CHOC_EXPECT_TRUE (loudest (ConstantQReading::mean) > -60.0f);
 
+    // Channels are analysed apart: each of six reads its own sine, as one
+    // channel alone does, and nothing at the others'.
+    std::vector<std::vector<float>> six;
+
+    for (double frequency : { 110.0, 220.0, 440.0, 880.0, 1760.0, 3520.0 })
+        six.push_back (sineAt (frequency));
+
+    const auto sixColumns = runAll (six, ConstantQReading::mean);
+    const auto twoColumns = runAll ({ six[0], six[3] }, ConstantQReading::mean);
+    const auto alone = run (six[3], ConstantQReading::mean);
+
+    for (size_t c = 0; c < six.size(); ++c)
+        for (size_t other = 0; other < six.size(); ++other)
+        {
+            const auto level = sixColumns[c][nearest (110.0 * std::exp2 (
+                static_cast<double> (other)))].back();
+
+            if (other == c)
+            {
+                CHOC_EXPECT_NEAR (level, 0.0f, 0.1f);
+            }
+            else
+            {
+                CHOC_EXPECT_TRUE (level < -40.0f);
+            }
+        }
+
+    CHOC_EXPECT_TRUE (twoColumns[1] == alone && sixColumns[3] == alone);
+    CHOC_EXPECT_TRUE (twoColumns[0] == sixColumns[0]);
+
     // Columns allocate nothing.
+    chardsp::AnalysisBuffer<float> buffer;
+    buffer.prepare (1, 2 * size);
+    buffer.restart (hop);
     chardsp::ConstantQStream<float> stream;
-    stream.prepare (size);
     stream.configure (design, hop, ConstantQReading::mean);
+    std::vector<float> block (static_cast<size_t> (size));
     std::vector<float> column (static_cast<size_t> (stream.getTransform().getNumBands()));
-    uint32_t advanced = 0;
     const auto allocationsBefore = allocationCount.load();
 
     for (size_t i = 0; i + 256 <= sine.size(); i += 256)
     {
-        stream.push (sine.data() + i, sine.data() + i, 256);
+        const float* channel = sine.data() + i;
+        buffer.push (&channel, 1, 256);
 
-        while (stream.next (column.data(), advanced)) {}
+        while (buffer.nextHop (size))
+        {
+            buffer.read (0, size, block.data());
+            stream.process (block.data(), column.data());
+        }
     }
 
     CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);

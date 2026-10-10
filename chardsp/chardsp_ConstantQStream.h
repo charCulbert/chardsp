@@ -1,13 +1,10 @@
-// The real-time side of chardsp_ConstantQ.h, whose transform follows CiCueTea
+// A spectrogram from chardsp_ConstantQ.h, whose transform follows CiCueTea
 // (https://github.com/jdsierral/CiCueTea, MIT); its notice is in that header.
 
 #pragma once
 
 #include <algorithm>
-#include <atomic>
 #include <cmath>
-#include <cstdint>
-#include <memory>
 #include <type_traits>
 #include <vector>
 
@@ -16,16 +13,11 @@
 namespace chardsp
 {
 
-enum class ConstantQChannel
-{
-    mix,
-    left,
-    right
-};
-
-// A ConstantQ over a live stereo signal, as a spectrogram: a column
-// of levels in dB per band (-160 at least) every `hop` samples, from the newest
-// block, each band read over the hop centred on the block's middle.
+// A ConstantQ's spectrogram: a column of levels in dB per band
+// (-160 at least) for every hop of a signal, from the newest block, each band
+// read over the hop centred on the block's middle. It takes the block, one
+// channel at a time; an AnalysisBuffer (chardsp_AnalysisBuffer.h) can bring
+// it from the audio thread.
 //
 // ConstantQReading::centre reads only the middle, as most spectrograms do:
 // one coefficient per band per hop. A high band's coefficients
@@ -42,11 +34,7 @@ enum class ConstantQChannel
 // samples that is, rounded up to a power of two, and each group analyses only
 // those: the same bands, sampled on the coarser bins of a shorter block.
 //
-// prepare() allocates the ring, holding two of the largest block, while
-// nothing pushes. push() runs on the audio thread and only copies both
-// channels into the ring. configure() and next() run on another thread (the
-// analysis), which sets the transform up and reads the ring; configure()
-// allocates, next() does not.
+// configure() allocates when anything changes; process() does not.
 template <typename SampleType>
 class ConstantQStream
 {
@@ -55,26 +43,10 @@ public:
                    || std::is_same_v<SampleType, double>,
                    "ConstantQStream supports float or double");
 
-    void prepare (int maxBlockSize)
-    {
-        int capacity = 8;
-
-        while (capacity < 2 * maxBlockSize && capacity < (1 << 30))
-            capacity *= 2;
-
-        ringSize = static_cast<uint32_t> (capacity);
-        leftRing.reset (new std::atomic<SampleType>[ringSize]());
-        rightRing.reset (new std::atomic<SampleType>[ringSize]());
-        writeIndex.store (0, std::memory_order_release);
-        analysed = 0;
-    }
-
-    // False, analysing nothing, when the design isn't valid or its block is
-    // over half the ring. Anything changed starts afresh from the newest
-    // samples.
+    // False, analysing nothing, when the design isn't valid. Rebuilds only
+    // what changed.
     bool configure (const ConstantQDesign& newDesign, int newHop,
-                    ConstantQReading newReading = ConstantQReading::mean,
-                    ConstantQChannel newChannel = ConstantQChannel::mix)
+                    ConstantQReading newReading = ConstantQReading::mean)
     {
         newHop = std::max (1, newHop);
         const bool rebuild = newDesign != design || ! transform.isValid();
@@ -83,8 +55,6 @@ public:
         {
             design = newDesign;
             transform.prepare (design);
-            block.assign (static_cast<size_t> (transform.getBlockSize()),
-                          SampleType {});
             magnitudes.assign (static_cast<size_t> (transform.getNumBands()),
                                SampleType {});
         }
@@ -96,12 +66,7 @@ public:
         }
 
         reading = newReading;
-        channel = newChannel;
-        analysed = writeIndex.load (std::memory_order_acquire);
-        const auto blockSize = static_cast<uint32_t> (transform.getBlockSize());
-        ready = transform.isValid() && blockSize * 2 <= ringSize
-             && static_cast<uint32_t> (hop) <= ringSize - blockSize;
-        return ready;
+        return transform.isValid();
     }
 
     // The bands, with the whole block.
@@ -110,74 +75,21 @@ public:
         return transform;
     }
 
+    int getBlockSize() const noexcept { return transform.getBlockSize(); }
     int getHop() const noexcept { return hop; }
 
-    // Audio thread: never blocks or allocates.
-    void push (const SampleType* left, const SampleType* right,
-               uint32_t frames) noexcept
+    // The column for the hop that `block` (getBlockSize() samples) ends with,
+    // into `decibels` (a value per band).
+    void process (const SampleType* block, SampleType* decibels) noexcept
     {
-        if (ringSize == 0)
+        if (! transform.isValid())
             return;
 
-        uint32_t index = writeIndex.load (std::memory_order_relaxed);
-
-        for (uint32_t i = 0; i < frames; ++i, ++index)
-        {
-            leftRing[index % ringSize].store (left[i],
-                                              std::memory_order_relaxed);
-            rightRing[index % ringSize].store (right[i],
-                                               std::memory_order_relaxed);
-        }
-
-        writeIndex.store (index, std::memory_order_release);
-    }
-
-    // The next column into `decibels` (a value per band), if a hop's worth of
-    // samples has arrived since the last, and in `advanced` the samples since
-    // the last column. With more than `keep` columns waiting, or any the ring
-    // has already overwritten, it skips to the newest few.
-    bool next (SampleType* decibels, uint32_t& advanced,
-               uint32_t keep = 8) noexcept
-    {
-        if (! ready)
-            return false;
-
-        const auto size = static_cast<uint32_t> (transform.getBlockSize());
-        const auto step = static_cast<uint32_t> (hop);
-        const uint32_t end = writeIndex.load (std::memory_order_acquire);
-
-        if (end < size)
-            return false;
-
-        uint32_t before = analysed;
-
-        if (end - analysed > ringSize - size) // fell behind the ring
-            analysed = end - step, before = analysed - step;
-
-        const uint32_t waiting = (end - analysed) / step;
-
-        if (waiting == 0)
-            return false;
-
-        if (waiting > keep)
-            analysed += (waiting - keep) * step;
-
-        analysed += step;
-        advanced = analysed - before;
-
-        for (uint32_t i = 0; i < size; ++i)
-        {
-            const uint32_t at = (analysed - size + i) % ringSize;
-            const auto left = leftRing[at].load (std::memory_order_relaxed);
-            const auto right = rightRing[at].load (std::memory_order_relaxed);
-            block[i] = channel == ConstantQChannel::left ? left
-                : channel == ConstantQChannel::right ? right
-                : static_cast<SampleType> (0.5) * (left + right);
-        }
+        const int size = transform.getBlockSize();
 
         if (reading == ConstantQReading::centre)
         {
-            transform.process (block.data());
+            transform.process (block);
 
             for (int b = 0; b < transform.getNumBands(); ++b)
                 magnitudes[static_cast<size_t> (b)] =
@@ -192,9 +104,8 @@ public:
             {
                 if (g.transform.isValid())
                 {
-                    const auto length = static_cast<uint32_t> (
-                        g.transform.getBlockSize());
-                    g.transform.process (block.data() + (size - length) / 2);
+                    const int length = g.transform.getBlockSize();
+                    g.transform.process (block + (size - length) / 2);
                     g.transform.getMagnitudes (
                         reading, 0.5 * length - 0.5 * hop,
                         0.5 * length + 0.5 * hop, magnitudes.data() + g.first);
@@ -202,7 +113,7 @@ public:
                 }
 
                 if (! whole)
-                    transform.process (block.data()), whole = true;
+                    transform.process (block), whole = true;
 
                 for (int b = g.first; b < g.end; ++b)
                     magnitudes[static_cast<size_t> (b)] = transform.getMagnitude (
@@ -214,8 +125,6 @@ public:
             decibels[b] = static_cast<SampleType> (std::max (-160.0,
                 20.0 * std::log10 (std::max (
                     1.0e-8, static_cast<double> (magnitudes[b])))));
-
-        return true;
     }
 
 private:
@@ -272,13 +181,7 @@ private:
     ConstantQDesign design;
     int hop = 0;
     ConstantQReading reading = ConstantQReading::mean;
-    ConstantQChannel channel = ConstantQChannel::mix;
-    bool ready = false;
-    std::vector<SampleType> block, magnitudes;
-    uint32_t ringSize = 0;
-    uint32_t analysed = 0; // the sample the last column ended at
-    std::unique_ptr<std::atomic<SampleType>[]> leftRing, rightRing;
-    std::atomic<uint32_t> writeIndex { 0 };
+    std::vector<SampleType> magnitudes;
 };
 
 } // namespace chardsp
