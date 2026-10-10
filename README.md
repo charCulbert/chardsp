@@ -85,11 +85,13 @@ polyphonic basic synth.
 
 ## Dependencies
 
-Pinned Git submodules:
+The headers need only the standard library and two pinned Git submodules:
 
-- [CHOC](https://github.com/Tracktion/choc) — ISC
 - [Signalsmith DSP](https://github.com/Signalsmith-Audio/dsp) — MIT
 - [Signalsmith elliptic-blep](https://github.com/Signalsmith-Audio/elliptic-blep) — MIT
+
+The tests and examples also use [CHOC](https://github.com/Tracktion/choc)
+(ISC), a third submodule.
 
 `chardsp_ConstantQ.h` and `chardsp_ConstantQStream.h` are derived from
 [CiCueTea](https://github.com/jdsierral/CiCueTea) by Juan Sierra — MIT; its

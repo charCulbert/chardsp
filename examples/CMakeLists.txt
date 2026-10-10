@@ -1,6 +1,6 @@
 if (APPLE)
     add_library(chardsp_example_host STATIC common/DemoHost.cpp)
-    target_link_libraries(chardsp_example_host PUBLIC chardsp
+    target_link_libraries(chardsp_example_host PUBLIC chardsp chardsp_choc
         "-framework WebKit"
         "-framework Cocoa"
         "-framework CoreAudio"
