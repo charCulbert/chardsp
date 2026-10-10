@@ -92,8 +92,8 @@ enum class ConstantQReading
 //
 // process() takes one real FFT of a block; everything after reads that
 // spectrum. A coefficient at any time is a weighted sum over the band's bins,
-// so one value per band (at the block's centre, say) costs
-// far less than CiCueTea's inverse FFT per band. If real-time speed is ever
+// so one value per band (at the block's centre, say) costs far less than
+// CiCueTea's inverse FFT per band. If real-time speed is ever
 // needed, a multirate design like librosa's (the rate halved each octave down,
 // so each octave takes a small FFT) could cut the cost several times, with the
 // resampler's quality limiting precision.

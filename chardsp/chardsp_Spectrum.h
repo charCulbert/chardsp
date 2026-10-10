@@ -22,8 +22,8 @@ enum class SpectrumWindow
 
 // A spectrum of blocks of `size` samples, windowed and zero-padded to fftSize
 // (a power of two, at least size; 0 is size itself). A symmetric window has
-// both ends on the block's ends, as a spectrogram's usually does; a periodic
-// one is one period of the window repeating, the usual choice for analysis.
+// both ends on the block's ends; a periodic one is one period of the window
+// repeating, so blocks overlapping by a suitable hop sum evenly.
 struct SpectrumDesign
 {
     int size = 2048;

@@ -13,16 +13,16 @@
 namespace chardsp
 {
 
-// A ConstantQ's spectrogram: a column of levels in dB per band
-// (-160 at least) for every hop of a signal, from the newest block, each band
-// read over the hop centred on the block's middle. It takes the block, one
-// channel at a time; an AnalysisBuffer (chardsp_AnalysisBuffer.h) can bring
-// it from the audio thread.
+// A ConstantQ's spectrogram: a column of levels in dB per band (-160 at least)
+// for every hop of a signal, from the newest block, each band read over the
+// hop centred on the block's middle. It takes the block, one channel at a
+// time; an AnalysisBuffer (chardsp_AnalysisBuffer.h) can bring it from the
+// audio thread.
 //
 // ConstantQReading::centre reads only the middle, as most spectrograms do:
-// one coefficient per band per hop. A high band's coefficients
-// change far faster than that, so a click between two middles goes unseen and
-// close tones in one band alias to a slow flicker. peak and mean read every
+// one coefficient per band per hop. A high band's coefficients change far
+// faster than that, so a click between two middles goes unseen and close
+// tones in one band alias to a slow flicker. peak and mean read every
 // coefficient in the hop instead. mean, the default, is the band's power over
 // the hop: steady tones read as in centre, noise reads the same in every band
 // whatever the hop, and a click reads its energy spread over the hop. peak
@@ -30,18 +30,19 @@ namespace chardsp
 // more coefficients per hop (the high ones).
 //
 // For peak and mean, the bands' coefficients over the hop only depend on the
-// samples within six of their atom's spreads, so bands are grouped by how many
+// samples within about six of their atom's spreads (with a few bands per
+// octave or more; see ConstantQ::getReach()), so bands are grouped by how many
 // samples that is, rounded up to a power of two, and each group analyses only
 // those: the same bands, sampled on the coarser bins of a shorter block.
 //
 // configure() allocates when anything changes; process() does not.
 template <typename SampleType>
-class ConstantQStream
+class ConstantQSpectrogram
 {
 public:
     static_assert (std::is_same_v<SampleType, float>
                    || std::is_same_v<SampleType, double>,
-                   "ConstantQStream supports float or double");
+                   "ConstantQSpectrogram supports float or double");
 
     // False, analysing nothing, when the design isn't valid. Rebuilds only
     // what changed.

@@ -28,7 +28,7 @@ allocation-free during sample processing, and support `float` or `double`.
   tuning, complex coefficients per band at any time in a block of any power
   of two, centre, peak, or mean readings over a stretch, and columns of a
   signal of any length from overlapping blocks.
-- [`chardsp_ConstantQStream.h`](chardsp/chardsp_ConstantQStream.h) — a
+- [`chardsp_ConstantQSpectrogram.h`](chardsp/chardsp_ConstantQSpectrogram.h) — a
   constant-Q spectrogram column of dB per band for each hop, from the newest
   block of one channel, with the high bands read from shorter blocks.
 - [`chardsp_DCBlocker.h`](chardsp/chardsp_DCBlocker.h) — first-order DC
@@ -93,7 +93,7 @@ The headers need only the standard library and two pinned Git submodules:
 The tests and examples also use [CHOC](https://github.com/Tracktion/choc)
 (ISC), a third submodule.
 
-`chardsp_ConstantQ.h` and `chardsp_ConstantQStream.h` are derived from
+`chardsp_ConstantQ.h` and `chardsp_ConstantQSpectrogram.h` are derived from
 [CiCueTea](https://github.com/jdsierral/CiCueTea) by Juan Sierra — MIT; its
 notice is in `chardsp_ConstantQ.h`.
 

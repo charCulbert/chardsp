@@ -17,7 +17,7 @@
 #include "chardsp/chardsp_Biquad.h"
 #include "chardsp/chardsp_ColoredNoise.h"
 #include "chardsp/chardsp_ConstantQ.h"
-#include "chardsp/chardsp_ConstantQStream.h"
+#include "chardsp/chardsp_ConstantQSpectrogram.h"
 #include "chardsp/chardsp_DCBlocker.h"
 #include "chardsp/chardsp_DelayLine.h"
 #include "chardsp/chardsp_Detectors.h"
@@ -3156,7 +3156,7 @@ void testAnalysisBuffer (choc::test::TestProgress& progress)
     CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
 }
 
-void testConstantQStream (choc::test::TestProgress& progress)
+void testConstantQSpectrogram (choc::test::TestProgress& progress)
 {
     using chardsp::ConstantQReading;
     chardsp::ConstantQDesign design;
@@ -3177,7 +3177,7 @@ void testConstantQStream (choc::test::TestProgress& progress)
         chardsp::AnalysisBuffer<float> buffer;
         buffer.prepare (channels, 2 * size);
         buffer.restart (hop);
-        chardsp::ConstantQStream<float> stream;
+        chardsp::ConstantQSpectrogram<float> stream;
         CHOC_EXPECT_TRUE (stream.configure (design, hop, reading));
         CHOC_EXPECT_EQ (stream.getBlockSize(), size);
         const auto bands = static_cast<size_t> (stream.getTransform().getNumBands());
@@ -3301,7 +3301,7 @@ void testConstantQStream (choc::test::TestProgress& progress)
     chardsp::AnalysisBuffer<float> buffer;
     buffer.prepare (1, 2 * size);
     buffer.restart (hop);
-    chardsp::ConstantQStream<float> stream;
+    chardsp::ConstantQSpectrogram<float> stream;
     stream.configure (design, hop, ConstantQReading::mean);
     std::vector<float> block (static_cast<size_t> (size));
     std::vector<float> column (static_cast<size_t> (stream.getTransform().getNumBands()));
@@ -3573,7 +3573,7 @@ int main()
     { CHOC_TEST (constant_q_bands); testConstantQBands (progress); }
     { CHOC_TEST (constant_q_readings); testConstantQReadings (progress); }
     { CHOC_TEST (constant_q_columns); testConstantQColumns (progress); }
-    { CHOC_TEST (constant_q_stream); testConstantQStream (progress); }
+    { CHOC_TEST (constant_q_spectrogram); testConstantQSpectrogram (progress); }
     { CHOC_TEST (spectrum); testSpectrum (progress); }
     { CHOC_TEST (simple_downsampler_reference);
       testSimpleDownsamplerParity (progress); }
