@@ -20,8 +20,10 @@ allocation-free during sample processing, and support `float` or `double`.
 - [`chardsp_ConstantQ.h`](chardsp/chardsp_ConstantQ.h) — constant-Q
   transform after CiCueTea's sparse NSGF-CQT: any bands per octave and
   tuning, complex coefficients per band at any time in a block of any power
-  of two, centre, peak, or mean readings over a stretch, and a stereo
-  streaming helper that yields a spectrogram column of dB per hop.
+  of two, and centre, peak, or mean readings over a stretch.
+- [`chardsp_ConstantQStream.h`](chardsp/chardsp_ConstantQStream.h) — a
+  constant-Q spectrogram of a live stereo signal: a column of dB per hop,
+  with the high bands read from shorter blocks.
 - [`chardsp_DCBlocker.h`](chardsp/chardsp_DCBlocker.h) — first-order DC
   removal with adjustable cutoff and bypass.
 - [`chardsp_DelayLine.h`](chardsp/chardsp_DelayLine.h) — fixed-capacity
@@ -80,9 +82,9 @@ Pinned Git submodules:
 - [Signalsmith DSP](https://github.com/Signalsmith-Audio/dsp) — MIT
 - [Signalsmith elliptic-blep](https://github.com/Signalsmith-Audio/elliptic-blep) — MIT
 
-`chardsp_ConstantQ.h` is derived from
+`chardsp_ConstantQ.h` and `chardsp_ConstantQStream.h` are derived from
 [CiCueTea](https://github.com/jdsierral/CiCueTea) by Juan Sierra — MIT; its
-notice is in that header.
+notice is in `chardsp_ConstantQ.h`.
 
 chardsp is ISC-licensed; see [LICENSE](LICENSE). Source distributions must
 retain the license files in this repository and its submodules.

@@ -16,6 +16,7 @@
 #include "chardsp/chardsp_Biquad.h"
 #include "chardsp/chardsp_ColoredNoise.h"
 #include "chardsp/chardsp_ConstantQ.h"
+#include "chardsp/chardsp_ConstantQStream.h"
 #include "chardsp/chardsp_DCBlocker.h"
 #include "chardsp/chardsp_DelayLine.h"
 #include "chardsp/chardsp_Detectors.h"
