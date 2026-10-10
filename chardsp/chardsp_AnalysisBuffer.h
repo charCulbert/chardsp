@@ -21,7 +21,8 @@ namespace chardsp
 // prepare() allocates, while nothing pushes or reads. push() runs on the audio
 // thread and only copies samples into the ring; restart(), nextHop() and
 // read() run on the reader's thread. Neither waits for the other: a reader
-// that falls behind skips hops instead.
+// that falls behind skips hops instead, and a read the writer overtook while
+// it copied says so, for the reader to drop that hop.
 template <typename SampleType>
 class AnalysisBuffer
 {
@@ -47,6 +48,7 @@ public:
         ring.reset (new std::atomic<SampleType>[
             static_cast<size_t> (numChannels) * ringSize]());
         writeIndex.store (0, std::memory_order_release);
+        writing.store (0, std::memory_order_relaxed);
         position = advanced = 0;
         skipped = hop = 0;
         return true;
@@ -64,6 +66,11 @@ public:
             return;
 
         const uint32_t start = writeIndex.load (std::memory_order_relaxed);
+        // Say how far this push will write before writing it, so a read the
+        // writes overtake can tell.
+        writing.store (start + static_cast<uint32_t> (numSamples),
+                       std::memory_order_relaxed);
+        std::atomic_thread_fence (std::memory_order_release);
 
         for (int c = 0; c < numChannels; ++c)
         {
@@ -141,8 +148,12 @@ public:
     int getSkipped() const noexcept { return skipped; }
 
     // The `numSamples` (at most getCapacity()) of a channel up to the current
-    // hop's end. Any from before the first push read as silence.
-    void read (int channel, int numSamples,
+    // hop's end. Any from before the first push read as silence. False when
+    // the writer overwrote the oldest of them before the copy finished: the
+    // copy is then torn, and the hop is to be dropped. A read that succeeds
+    // means every earlier read of the hop did too, so with several channels
+    // the last read's answer is the hop's.
+    bool read (int channel, int numSamples,
                SampleType* destination) const noexcept
     {
         const auto* samples = ring.get() + static_cast<size_t> (channel)
@@ -152,6 +163,12 @@ public:
         for (int i = 0; i < numSamples; ++i, ++index)
             destination[i] = samples[index & (ringSize - 1)].load (
                 std::memory_order_relaxed);
+
+        // Any sample overwritten above makes the push that did it visible here.
+        std::atomic_thread_fence (std::memory_order_acquire);
+        return writing.load (std::memory_order_relaxed)
+                   - (position - static_cast<uint32_t> (numSamples))
+               <= ringSize;
     }
 
 private:
@@ -159,6 +176,7 @@ private:
     uint32_t ringSize = 0;
     std::unique_ptr<std::atomic<SampleType>[]> ring; // channel after channel
     std::atomic<uint32_t> writeIndex { 0 };
+    std::atomic<uint32_t> writing { 0 }; // the end of the push under way
     uint32_t position = 0, advanced = 0; // the reader's
     int skipped = 0, hop = 0;
 };

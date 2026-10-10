@@ -2844,7 +2844,7 @@ void testAnalysisBuffer (choc::test::TestProgress& progress)
 
         for (int c = 0; c < from.getNumChannels(); ++c)
         {
-            from.read (c, length, block.data());
+            same = from.read (c, length, block.data()) && same;
 
             for (int i = 0; i < length; ++i)
             {
@@ -2914,6 +2914,20 @@ void testAnalysisBuffer (choc::test::TestProgress& progress)
     CHOC_EXPECT_TRUE (buffer.nextHop (32));
     CHOC_EXPECT_EQ (buffer.getPosition(), 160u);
     CHOC_EXPECT_FALSE (buffer.nextHop (32));
+
+    // A read the writer overtakes says so: chosen with 64 pushed, the hop
+    // ending at 48 reads from 16, which 8 more samples leave alone and 16
+    // more overwrite.
+    CHOC_EXPECT_TRUE (buffer.prepare (1, 64));
+    pushed = 0;
+    buffer.restart (16);
+    push (buffer, 1, 64);
+    CHOC_EXPECT_TRUE (buffer.nextHop (32));
+    CHOC_EXPECT_EQ (buffer.getPosition(), 48u);
+    push (buffer, 1, 8);
+    CHOC_EXPECT_TRUE (readsBack (buffer, 32));
+    push (buffer, 1, 16);
+    CHOC_EXPECT_FALSE (buffer.read (0, 32, block.data()));
 
     // Or past `keep` hops, to the newest `keep`.
     CHOC_EXPECT_TRUE (buffer.prepare (1, 8192));

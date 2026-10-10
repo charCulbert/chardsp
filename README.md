@@ -137,11 +137,11 @@ buffer.push (channels, numChannels, numSamples);
 // Analysis thread
 while (buffer.nextHop (design.size))
     for (int c = 0; c < buffer.getNumChannels(); ++c)
-    {
-        buffer.read (c, design.size, block.data());
-        spectrum.process (block.data());
-        spectrum.getMagnitudes (columns[c].data());
-    }
+        if (buffer.read (c, design.size, block.data())) // else overwritten
+        {
+            spectrum.process (block.data());
+            spectrum.getMagnitudes (columns[c].data());
+        }
 ```
 
 ## Build
