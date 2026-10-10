@@ -70,8 +70,8 @@ public:
                    || std::is_same_v<SampleType, double>,
                    "Spectrum supports float or double");
 
-    // False, analysing nothing, for a size under 4 or an fftSize that isn't
-    // a power of two at least as long.
+    // False, analysing nothing and with no bins, for a size under 4 or an
+    // fftSize that isn't a power of two at least as long.
     bool prepare (const SpectrumDesign& newDesign)
     {
         design = newDesign;
@@ -85,6 +85,7 @@ public:
             || (length & (length - 1)) != 0)
         {
             window.clear();
+            bins.clear();
             return false;
         }
 

@@ -3482,11 +3482,12 @@ void testSpectrum (choc::test::TestProgress& progress)
     CHOC_EXPECT_TRUE (spectrum.getBins()[40].real() > 0.0);
     CHOC_EXPECT_NEAR (spectrum.getBins()[40].real() * spectrum.getScale(), 1.0, 1.0e-9);
 
-    // Designs it refuses.
+    // Designs it refuses, leaving no bins from before.
     design.periodic = false;
     design.fftSize = 512;
     CHOC_EXPECT_FALSE (spectrum.prepare (design));
     CHOC_EXPECT_FALSE (spectrum.isValid());
+    CHOC_EXPECT_EQ (spectrum.getNumBins(), 0);
     design.fftSize = 1536;
     CHOC_EXPECT_FALSE (spectrum.prepare (design));
     design.size = 2;
