@@ -3391,6 +3391,55 @@ void testSpectrum (choc::test::TestProgress& progress)
                 CHOC_EXPECT_TRUE (worst < 0.01);
             }
 
+    // Short blocks too, a little low with a symmetric window.
+    for (auto window : { SpectrumWindow::hann, SpectrumWindow::blackmanHarris })
+        for (bool periodic : { false, true })
+        {
+            chardsp::SpectrumDesign design;
+            design.size = 16;
+            design.window = window;
+            design.periodic = periodic;
+            spectrum.prepare (design);
+            block.resize (16);
+            double worst = 0.0;
+
+            for (int cycles = 2; cycles <= 6; ++cycles)
+                for (int step = 0; step < 16; ++step)
+                {
+                    for (size_t i = 0; i < block.size(); ++i)
+                        block[i] = std::sin (6.283185307179586 * cycles * i / 16.0
+                                             + 0.4 * step);
+
+                    spectrum.process (block.data());
+                    worst = std::max (worst, std::abs (decibels (
+                        spectrum.getMagnitude (cycles))));
+                }
+
+            CHOC_EXPECT_TRUE (worst < (periodic ? 1.0e-9 : 0.04));
+        }
+
+    // A sine that doesn't fit the block whole reads by phase: 17 samples,
+    // rectangular, a sine on bin 4 of 32.
+    chardsp::SpectrumDesign odd;
+    odd.size = 17;
+    odd.fftSize = 32;
+    odd.window = SpectrumWindow::rectangular;
+    spectrum.prepare (odd);
+    block.resize (17);
+    double lowest = 10.0, highest = 0.0;
+
+    for (int step = 0; step < 16; ++step)
+    {
+        for (size_t i = 0; i < block.size(); ++i)
+            block[i] = std::sin (6.283185307179586 * 4.0 * i / 32.0 + 0.4 * step);
+
+        spectrum.process (block.data());
+        lowest = std::min (lowest, static_cast<double> (spectrum.getMagnitude (4)));
+        highest = std::max (highest, static_cast<double> (spectrum.getMagnitude (4)));
+    }
+
+    CHOC_EXPECT_TRUE (lowest < 0.95 && highest > 1.05 && highest < 1.07);
+
     chardsp::SpectrumDesign nearDC;
     nearDC.size = 1024;
     nearDC.window = SpectrumWindow::blackmanHarris;
