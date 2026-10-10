@@ -2,9 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <type_traits>
-
-#include "choc/containers/choc_Span.h"
 
 namespace chardsp
 {
@@ -18,9 +17,11 @@ struct SamplePlayer
                    || std::is_same_v<SampleType, double>,
                    "SamplePlayer supports float or double");
 
-    void setSampleData (choc::span<const SampleType> newData) noexcept
+    // numSamples samples the caller owns, read where they are.
+    void setSampleData (const SampleType* samples, size_t numSamples) noexcept
     {
-        data = newData;
+        data = samples;
+        size = samples != nullptr ? numSamples : 0;
         reset();
     }
 
@@ -33,8 +34,7 @@ struct SamplePlayer
     void start (SampleType startPosition = SampleType {}) noexcept
     {
         position = sanitisePosition (startPosition);
-        playing = ! data.empty()
-               && position < static_cast<SampleType> (data.size());
+        playing = size > 0 && position < static_cast<SampleType> (size);
     }
 
     void stop() noexcept { playing = false; }
@@ -50,28 +50,28 @@ struct SamplePlayer
     {
         position = sanitisePosition (nextPosition);
 
-        if (position >= static_cast<SampleType> (data.size()))
+        if (position >= static_cast<SampleType> (size))
             playing = false;
     }
 
     SampleType process() noexcept
     {
-        if (! playing || data.empty()
-            || position >= static_cast<SampleType> (data.size()))
+        if (! playing || size == 0
+            || position >= static_cast<SampleType> (size))
         {
             playing = false;
             return SampleType {};
         }
 
         const auto firstIndex = static_cast<size_t> (position);
-        const auto secondIndex = std::min (firstIndex + 1, data.size() - 1);
+        const auto secondIndex = std::min (firstIndex + 1, size - 1);
         const auto fraction = position
             - static_cast<SampleType> (firstIndex);
         const auto output = data[firstIndex]
             + (data[secondIndex] - data[firstIndex]) * fraction;
         position += rate;
 
-        if (position >= static_cast<SampleType> (data.size()))
+        if (position >= static_cast<SampleType> (size))
             playing = false;
 
         return output;
@@ -88,7 +88,8 @@ private:
                                      : SampleType {};
     }
 
-    choc::span<const SampleType> data;
+    const SampleType* data = nullptr;
+    size_t size = 0;
     SampleType position = SampleType {};
     SampleType rate = static_cast<SampleType> (1);
     bool playing = false;

@@ -629,7 +629,7 @@ void testSamplePlayer (choc::test::TestProgress& progress)
 {
     std::array<float, 3> samples { 0.0f, 1.0f, 0.0f };
     chardsp::SamplePlayer<float> player;
-    player.setSampleData (samples);
+    player.setSampleData (samples.data(), samples.size());
     player.setRate (0.5f);
     player.start();
     CHOC_EXPECT_TRUE (player.isPlaying());
@@ -655,7 +655,7 @@ void testSamplePlayer (choc::test::TestProgress& progress)
 
     std::array<double, 2> doubleSamples { -1.0, 1.0 };
     chardsp::SamplePlayer<double> doublePlayer;
-    doublePlayer.setSampleData (doubleSamples);
+    doublePlayer.setSampleData (doubleSamples.data(), doubleSamples.size());
     doublePlayer.setRate (0.5);
     doublePlayer.start (0.5);
     CHOC_EXPECT_TRUE (std::abs (doublePlayer.process()) < 0.000001);
