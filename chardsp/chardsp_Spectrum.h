@@ -50,8 +50,11 @@ inline bool operator!= (const SpectrumDesign& a,
 // sample, which the FFT sees first ("zero phase"), so a steady sine's
 // neighbouring bins agree in phase and interpolate cleanly.
 //
-// Magnitudes are amplitudes: a sine of amplitude A on a bin's centre reads A
-// there whatever the window, and a constant reads its value at DC.
+// Magnitudes are amplitudes: a sine of amplitude A on a bin's centre at least
+// two window bins (fftSize / size bins each) from DC and Nyquist reads A
+// there whatever the window, and a constant reads its value at DC. Nearer
+// the ends a sine's image across them overlaps it: with Blackman or
+// Blackman-Harris, one window bin from DC reads up to 2 dB off, by phase.
 //
 // prepare() allocates; the rest does not.
 template <typename SampleType>

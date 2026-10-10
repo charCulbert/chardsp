@@ -3254,6 +3254,54 @@ void testSpectrum (choc::test::TestProgress& progress)
                         size * padding / 8)), decibels (0.5), 0.05);
                 }
 
+    // Near DC and Nyquist too, from two window bins in, at any phase; one
+    // window bin from DC, Blackman-Harris reads by phase.
+    for (auto window : { SpectrumWindow::rectangular, SpectrumWindow::hann,
+                         SpectrumWindow::hamming, SpectrumWindow::blackman,
+                         SpectrumWindow::blackmanHarris })
+        for (bool periodic : { false, true })
+            for (int padding : { 1, 2 })
+            {
+                chardsp::SpectrumDesign design;
+                design.size = 256;
+                design.fftSize = 256 * padding;
+                design.window = window;
+                design.periodic = periodic;
+                spectrum.prepare (design);
+                block.resize (256);
+                double worst = 0.0;
+
+                for (int cycles : { 2, 126 })
+                    for (int step = 0; step < 16; ++step)
+                    {
+                        for (size_t i = 0; i < block.size(); ++i)
+                            block[i] = std::sin (6.283185307179586 * cycles * i / 256.0
+                                                 + 0.4 * step);
+
+                        spectrum.process (block.data());
+                        worst = std::max (worst, std::abs (decibels (
+                            spectrum.getMagnitude (cycles * padding))));
+                    }
+
+                CHOC_EXPECT_TRUE (worst < 0.01);
+            }
+
+    chardsp::SpectrumDesign nearDC;
+    nearDC.size = 1024;
+    nearDC.window = SpectrumWindow::blackmanHarris;
+    nearDC.periodic = true;
+    spectrum.prepare (nearDC);
+    block.resize (1024);
+    sine (block, 1, 1.0);
+    spectrum.process (block.data());
+    const auto shifted = spectrum.getMagnitude (1);
+
+    for (size_t i = 0; i < block.size(); ++i)
+        block[i] = std::cos (6.283185307179586 * i / 1024.0 + 0.3);
+
+    spectrum.process (block.data());
+    CHOC_EXPECT_TRUE (std::abs (decibels (shifted) - decibels (spectrum.getMagnitude (1))) > 1.0);
+
     // A constant reads its value at DC; silence reads nothing anywhere.
     chardsp::SpectrumDesign design;
     design.size = 1024;
