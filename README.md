@@ -13,7 +13,9 @@ allocation-free during sample processing, and support `float` or `double`.
 - [`chardsp_AnalysisBuffer.h`](chardsp/chardsp_AnalysisBuffer.h) — a
   lock-free multichannel ring from the audio thread to an analysis thread,
   with a hop clock that skips ahead when the reader falls behind and reads of
-  the newest samples of any channel up to each hop.
+  the newest samples of any channel up to each hop. `double` needs lock-free
+  64-bit atomics, which some targets (32-bit Arm Cortex-M) lack: use `float`
+  there.
 - [`chardsp_BasicSynthVoice.h`](chardsp/chardsp_BasicSynthVoice.h) —
   combines two selectable oscillators, pulse width, colored noise, ADSR, a
   lowpass/bandpass/highpass filter, and velocity response into a synth voice.

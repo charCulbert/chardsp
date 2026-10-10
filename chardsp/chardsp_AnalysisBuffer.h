@@ -31,6 +31,13 @@ public:
     static_assert (std::is_same_v<SampleType, float>
                    || std::is_same_v<SampleType, double>,
                    "AnalysisBuffer supports float or double");
+    // Some targets (32-bit Arm Cortex-M, say) have no lock-free 64-bit
+    // atomics, so double there would make push() call a lock.
+    static_assert (std::atomic<SampleType>::is_always_lock_free,
+                   "AnalysisBuffer needs lock-free atomics of its sample type "
+                   "on this target: use float");
+    static_assert (std::atomic<uint32_t>::is_always_lock_free,
+                   "AnalysisBuffer needs lock-free 32-bit atomics");
 
     // Room for at least `capacity` samples of each channel (rounded up to a
     // power of two), all silent. The reader then restart()s.
