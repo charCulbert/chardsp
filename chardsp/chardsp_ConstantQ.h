@@ -92,9 +92,13 @@ enum class ConstantQReading
 // process() takes one real FFT of a block; everything after reads that
 // spectrum. A coefficient at any time is a weighted sum over the band's bins,
 // so one value per band (at the block's centre, say) costs
-// far less than CiCueTea's inverse FFT per band. Like CiCueTea's, the
-// transform treats the block as periodic: a whole file analysed as one block
-// wants silence padded at both ends.
+// far less than CiCueTea's inverse FFT per band. If real-time speed is ever
+// needed, a multirate design like librosa's (the rate halved each octave down,
+// so each octave takes a small FFT) could cut the cost several times, with the
+// resampler's quality limiting precision.
+//
+// Like CiCueTea's, the transform treats the block as periodic: a whole file
+// analysed as one block wants silence padded at both ends.
 //
 // prepare() allocates; the rest does not.
 template <typename SampleType>
@@ -106,7 +110,12 @@ public:
                    "ConstantQ supports float or double");
 
     // The default block: the shortest power of two holding bandsPerOctave
-    // periods of minFrequency, enough for the lowest band's atom.
+    // periods of minFrequency, enough for the lowest band's atom. Only just:
+    // it's about four of that atom's spreads long, so the atom's tails past
+    // two spreads either side of the middle (still an eighth of its peak) wrap
+    // round onto the block's other end, where a sine that doesn't fit the
+    // block a whole number of times meets them out of phase. The lowest bands
+    // then read up to 0.75 dB low; in twice the block, within 0.001 dB.
     static int minimumBlockSize (double sampleRate, double bandsPerOctave,
                                  double minFrequency) noexcept
     {
@@ -351,9 +360,10 @@ public:
         auto last = static_cast<int> (std::ceil (
             std::min (to, static_cast<double> (size)) / spacing)) - 1;
 
+        // No coefficient on the grid in the stretch: the one at its middle.
         if (first > last)
-            first = last = static_cast<int> (std::lround (middle / spacing))
-                         % length;
+            return static_cast<SampleType> (
+                std::abs (getCoefficient (bandIndex, middle)));
 
         const int count = last - first + 1;
         double peak = 0.0, power = 0.0;
@@ -402,22 +412,38 @@ public:
     }
 
     // One band over a run of columns `spacing` samples apart, the first
-    // centred `firstTime` samples into the block: one inverse FFT, then each
-    // column read from the coefficients within half a spacing of its time
-    // (centre: the one nearest). For analysing a long block at any time
-    // resolution.
+    // centred `firstTime` samples into the block: each column read from the
+    // coefficients within half a spacing of its time (centre: the one
+    // nearest), on a grid at least as fine as the columns, so neighbouring
+    // columns never share one. One inverse FFT for the lot, or, for a grid
+    // finer than prepare() made room for, a sum per coefficient read. For
+    // analysing a long block at any time resolution.
     void getColumns (int bandIndex, ConstantQReading reading,
                      double firstTime, double spacing, int numColumns,
                      SampleType* magnitudes) noexcept
     {
         const auto& band = bands[static_cast<size_t> (bandIndex)];
-        const int length = band.readingLength;
-        inverse (band, length);
+        const int length = std::min (size, std::max (band.readingLength,
+            nextPowerOfTwo (static_cast<int64_t> (std::min (
+                static_cast<double> (size),
+                std::ceil (size / std::max (spacing, 1.0)))))));
+        const bool inverted = length <= static_cast<int> (envelope.size());
+
+        if (inverted)
+            inverse (band, length);
+
         const double step = static_cast<double> (size) / length;
         const auto at = [&] (int64_t n) {
             n %= length;
-            return std::abs (std::complex<double> (envelope[static_cast<size_t> (
-                n < 0 ? n + length : n)]));
+            n += n < 0 ? length : 0;
+
+            if (inverted)
+                return std::abs (std::complex<double> (
+                    envelope[static_cast<size_t> (n)]));
+
+            return std::abs (sum (band, std::polar (1.0, twoPi * static_cast<double> (
+                    (static_cast<int64_t> (band.first) * n) % length) / length),
+                std::polar (1.0, twoPi * static_cast<double> (n) / length)));
         };
 
         for (int c = 0; c < numColumns; ++c)

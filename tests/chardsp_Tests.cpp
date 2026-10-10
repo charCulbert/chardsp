@@ -2667,6 +2667,66 @@ void testConstantQReadings (choc::test::TestProgress& progress)
     CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
 }
 
+void testConstantQColumns (choc::test::TestProgress& progress)
+{
+    using chardsp::ConstantQReading;
+    chardsp::ConstantQDesign design;
+    design.sampleRate = 48000.0;
+    design.minFrequency = 55.0;
+    design.maxFrequency = 60.0;
+
+    // At the shortest block the lowest band reads a sine low, as its atom's
+    // tails wrap round the block; in twice the block, not.
+    design.bandsPerOctave = 24.0;
+    chardsp::ConstantQ<double> cq;
+
+    for (int times : { 1, 2 })
+    {
+        design.blockSize = times * chardsp::ConstantQ<double>::minimumBlockSize (
+            48000.0, 24.0, 55.0);
+        CHOC_EXPECT_TRUE (cq.prepare (design));
+        std::vector<double> block (static_cast<size_t> (design.blockSize));
+
+        for (size_t i = 0; i < block.size(); ++i)
+            block[i] = std::sin (6.283185307179586 * 55.0 * i / 48000.0);
+
+        cq.process (block.data());
+        CHOC_EXPECT_NEAR (decibels (cq.getCentreMagnitude (0)),
+                          times == 1 ? -0.73 : 0.0, times == 1 ? 0.01 : 0.001);
+    }
+
+    // Columns finer than a band's coefficients each read their own time: a
+    // swelling sine in the lowest band of 96 per octave, whose coefficients
+    // are 171 ms apart, read every 5 ms.
+    design.bandsPerOctave = 96.0;
+    design.blockSize = 0;
+    CHOC_EXPECT_TRUE (cq.prepare (design));
+    const int size = cq.getBlockSize();
+    std::vector<double> block (static_cast<size_t> (size));
+
+    for (size_t i = 0; i < block.size(); ++i)
+        block[i] = static_cast<double> (i) / size * std::sin (
+            6.283185307179586 * cq.getFrequencies()[0] * i / 48000.0);
+
+    cq.process (block.data());
+    const double first = 0.5 * size - 50 * 240.0;
+
+    for (auto reading : { ConstantQReading::centre, ConstantQReading::mean })
+    {
+        std::vector<double> columns (100);
+        cq.getColumns (0, reading, first, 240.0, 100, columns.data());
+
+        for (size_t c = 0; c < columns.size(); ++c)
+        {
+            const double exact = std::abs (cq.getCoefficient (0, first + 240.0 * c));
+            CHOC_EXPECT_NEAR (decibels (columns[c]), decibels (exact), 0.01);
+
+            if (c > 0)
+                CHOC_EXPECT_TRUE (columns[c] > columns[c - 1]);
+        }
+    }
+}
+
 void testAnalysisBuffer (choc::test::TestProgress& progress)
 {
     chardsp::AnalysisBuffer<double> buffer;
@@ -3193,6 +3253,7 @@ int main()
     { CHOC_TEST (analysis_buffer); testAnalysisBuffer (progress); }
     { CHOC_TEST (constant_q_bands); testConstantQBands (progress); }
     { CHOC_TEST (constant_q_readings); testConstantQReadings (progress); }
+    { CHOC_TEST (constant_q_columns); testConstantQColumns (progress); }
     { CHOC_TEST (constant_q_stream); testConstantQStream (progress); }
     { CHOC_TEST (spectrum); testSpectrum (progress); }
     { CHOC_TEST (simple_downsampler_reference);
