@@ -2789,6 +2789,68 @@ void testConstantQColumns (choc::test::TestProgress& progress)
             CHOC_EXPECT_TRUE (worstLoud < 0.001);
         }
 
+    // Broad bands' atoms aren't Gaussian in time and reach further: the
+    // margins follow each atom's measured reach, so a block that gives
+    // columns gives them within the bound (1e-5 of full scale, for a full-
+    // scale sine on the lowest band), and one too short gives none. A band
+    // per octave up to 4 kHz has a top band cut off at Nyquist, and four
+    // octaves per band a band cut off at both ends: no block holds those.
+    struct Broad { double bandsPerOctave, maxFrequency; bool gives; };
+
+    for (auto broadCase : { Broad { 1.0, 1000.0, true }, Broad { 1.0, 4000.0, false },
+                            Broad { 0.25, 4000.0, false } })
+    {
+        chardsp::ConstantQDesign broad;
+        broad.sampleRate = 48000.0;
+        broad.bandsPerOctave = broadCase.bandsPerOctave;
+        broad.minFrequency = 110.0;
+        broad.maxFrequency = broadCase.maxFrequency;
+        std::vector<double> sine (48000);
+
+        for (size_t i = 0; i < sine.size(); ++i)
+            sine[i] = std::sin (6.283185307179586 * 110.0 * i / 48000.0);
+
+        broad.blockSize = 1 << 18;
+        chardsp::ConstantQ<double> padded;
+        CHOC_EXPECT_TRUE (padded.prepare (broad));
+        std::fill (one.begin(), one.end(), 0.0);
+        std::copy (sine.begin(), sine.end(), one.begin() + start);
+        padded.process (one.data());
+        const int broadBands = padded.getNumBands();
+        const int64_t count = 200;
+        std::vector<double> expected (static_cast<size_t> (broadBands * count));
+        std::vector<double> stitched (expected.size());
+
+        for (int b = 0; b < broadBands; ++b)
+            padded.getColumns (b, ConstantQReading::mean, static_cast<double> (start),
+                               240.0, static_cast<int> (count),
+                               expected.data() + b * count);
+
+        int gave = 0;
+
+        for (int blockSize : { 1024, 4096, 16384, 65536 })
+        {
+            broad.blockSize = blockSize;
+            chardsp::ConstantQ<double> blocks;
+
+            if (! blocks.prepare (broad) || ! blocks.getSignalColumns (
+                    sine.data(), 48000, ConstantQReading::mean, 240.0, count,
+                    stitched.data()))
+                continue;
+
+            ++gave;
+            CHOC_EXPECT_EQ (blocks.getNumBands(), broadBands);
+            double worst = 0.0;
+
+            for (size_t i = 0; i < expected.size(); ++i)
+                worst = std::max (worst, std::abs (stitched[i] - expected[i]));
+
+            CHOC_EXPECT_TRUE (worst < 1.0e-5);
+        }
+
+        CHOC_EXPECT_EQ (gave > 0, broadCase.gives);
+    }
+
     // A block too short for its margins gives nothing; columns allocate
     // nothing.
     std::vector<double> columns (static_cast<size_t> (bands * 400));

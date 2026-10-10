@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <limits>
 #include <cstdint>
 #include <type_traits>
 #include <vector>
@@ -240,6 +241,7 @@ public:
         scratch.assign (static_cast<size_t> (longest), {});
         envelope.assign (static_cast<size_t> (longest), {});
         padded.assign (static_cast<size_t> (size), SampleType {});
+        measureReaches();
         return true;
     }
 
@@ -249,11 +251,24 @@ public:
     int getNumBands() const noexcept { return static_cast<int> (bands.size()); }
 
     // How far a band's atom spreads in time: the standard deviation of its
-    // magnitude, in samples. A coefficient depends on the samples within
-    // about six of these of its time.
+    // magnitude near its centre, in samples. With a few bands per octave or
+    // more, a coefficient depends on the samples within about six of these of
+    // its time.
     double getSpread (int bandIndex) const noexcept
     {
         return bands[static_cast<size_t> (bandIndex)].spread;
+    }
+
+    // How far a band's atom reaches in time, measured, and at least six
+    // spreads: the samples further than this from a coefficient's time move
+    // it by at most 5e-6 of full scale between them. Past six spreads what's
+    // left is mostly the faint ripple of the weights CiCueTea leaves out; a
+    // broad band whose weights are cut off at DC or Nyquist reaches far
+    // further: infinite, when they're cut off well above CiCueTea's
+    // threshold, as their tails then fall only as 1 / time.
+    double getReach (int bandIndex) const noexcept
+    {
+        return bands[static_cast<size_t> (bandIndex)].reach;
     }
 
     // Each band's centre in Hz, low to high.
@@ -476,14 +491,18 @@ public:
     }
 
     // getColumns() over a signal of any length, as from one block holding all
-    // of it with silence either side (to within 1e-7 of full scale):
-    // numColumns columns `spacing` samples apart, the first centred on the
-    // signal's first sample, every band's into
-    // magnitudes[band · numColumns + column]. Overlapping blocks of
-    // getBlockSize() each give the columns their edges can't reach (six of
-    // the lowest band's spreads in), so memory doesn't grow with the signal.
+    // of it with silence either side: numColumns columns `spacing` samples
+    // apart, the first centred on the signal's first sample, every band's
+    // into magnitudes[band · numColumns + column]. Overlapping blocks of
+    // getBlockSize() each give the columns their edges can't reach (the
+    // furthest getReach() in), so memory doesn't grow with the signal. Each
+    // column is within 1e-5 of full scale of the one block's whatever the
+    // signal, and nearer 1e-7 for music or noise.
+    //
     // False, doing nothing, if the block is too short to give any; eight
-    // times minimumBlockSize() gives about 60% of each.
+    // times minimumBlockSize() gives about 60% of each. A design whose top
+    // band's weights are cut off at Nyquist (or bottom band's at DC), as with
+    // a band or so per octave reaching high, has atoms no block holds.
     bool getSignalColumns (const SampleType* signal, int64_t length,
                            ConstantQReading reading, double spacing,
                            int64_t numColumns, SampleType* magnitudes) noexcept
@@ -501,7 +520,12 @@ public:
                     std::min (static_cast<double> (size),
                               std::ceil (size / std::max (spacing, 1.0)))))))));
 
-        const double margin = 6.0 * bands[0].spread + spacing + grid;
+        double reach = 0.0;
+
+        for (const auto& band : bands)
+            reach = std::max (reach, band.reach);
+
+        const double margin = reach + spacing + grid;
 
         if (static_cast<double> (size) < 2.0 * margin + grid)
             return false;
@@ -553,8 +577,61 @@ private:
         int length = 0; // coefficients: count rounded up to a power of two
         int readingLength = 0; // coefficients for readings
         double spread = 0.0; // samples
+        double reach = 0.0; // samples
         size_t offset = 0; // into weights
     };
+
+    static constexpr double reachTolerance = 5.0e-6;
+
+    // Each band's reach, from its atom (the coefficients of an impulse) in
+    // double: the time either side past which the atom's magnitudes, summed
+    // over the samples there, stay within reachTolerance (a sum over the
+    // reading grid, which samples the atom finely enough).
+    void measureReaches()
+    {
+        signalsmith::fft::FFT<double> inverseFFT (4);
+        std::vector<std::complex<double>> in, out;
+
+        for (auto& band : bands)
+        {
+            const int length = band.readingLength;
+            const double step = static_cast<double> (size) / length;
+            inverseFFT.setSize (static_cast<size_t> (length));
+            in.assign (static_cast<size_t> (length), {});
+            out.resize (static_cast<size_t> (length));
+
+            for (int m = 0; m < band.count; ++m)
+                in[static_cast<size_t> (m)] = weights[band.offset
+                                                      + static_cast<size_t> (m)];
+
+            inverseFFT.ifft (in.data(), out.data());
+            double tail = 0.0;
+            int k = length / 2;
+
+            for (; k > 0; --k)
+            {
+                double here = std::abs (out[static_cast<size_t> (k)]);
+
+                if (k != length - k)
+                    here += std::abs (out[static_cast<size_t> (length - k)]);
+
+                if (tail + here * step > reachTolerance)
+                    break;
+
+                tail += here * step;
+            }
+
+            band.reach = std::max (6.0 * band.spread, (k + 1) * step);
+
+            // Weights cut off well above the threshold (by DC or Nyquist)
+            // leave a tail falling only as 1 / time, past any block's reach.
+            const double edge = 10.0 * threshold * 2.0 / size;
+
+            if (weights[band.offset] > edge
+                || weights[band.offset + static_cast<size_t> (band.count) - 1] > edge)
+                band.reach = std::numeric_limits<double>::infinity();
+        }
+    }
 
     static int nextPowerOfTwo (int64_t value) noexcept
     {
