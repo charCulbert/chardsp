@@ -8,11 +8,7 @@
 
 #include "chardsp_OscillatorEvents.h"
 #include "chardsp_OscillatorPhase.h"
-#include "choc/platform/choc_Assert.h"
-
-#include "choc/platform/choc_DisableAllWarnings.h"
 #include "elliptic-blep.h"
-#include "choc/platform/choc_ReenableAllWarnings.h"
 
 namespace chardsp
 {

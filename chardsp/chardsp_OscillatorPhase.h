@@ -1,10 +1,9 @@
 #pragma once
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <type_traits>
-
-#include "choc/platform/choc_Assert.h"
 
 namespace chardsp
 {
@@ -31,8 +30,8 @@ struct OscillatorPhase
 
     void prepare (SampleType newSampleRate) noexcept
     {
-        CHOC_ASSERT (std::isfinite (newSampleRate)
-                     && newSampleRate > SampleType {});
+        assert (std::isfinite (newSampleRate)
+                && newSampleRate > SampleType {});
         sampleRate = std::isfinite (newSampleRate)
                      && newSampleRate > SampleType {}
             ? newSampleRate : SampleType {};
