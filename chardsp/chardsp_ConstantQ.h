@@ -428,22 +428,25 @@ public:
             magnitudes[b] = getMagnitude (b, reading, from, to);
     }
 
-    // One band over a run of columns `spacing` samples apart, the first
-    // centred `firstTime` samples into the block: each column read from the
-    // coefficients within half a spacing of its time (centre: the one
-    // nearest), on a grid at least as fine as the columns, so neighbouring
+    // One band over a run of columns `spacing` samples apart (at least one),
+    // the first centred `firstTime` samples into the block: each column read
+    // from the coefficients within half a spacing of its time (centre: the
+    // one nearest), on a grid at least as fine as the columns, so neighbouring
     // columns never share one. One inverse FFT for the lot, or, for a grid
     // finer than prepare() made room for, a sum per coefficient read. For
-    // analysing a long block at any time resolution.
-    void getColumns (int bandIndex, ConstantQReading reading,
+    // analysing a long block at any time resolution. False, writing nothing,
+    // for columns less than a sample apart: the grid is no finer than that.
+    bool getColumns (int bandIndex, ConstantQReading reading,
                      double firstTime, double spacing, int numColumns,
                      SampleType* magnitudes) noexcept
     {
+        if (! (spacing >= 1.0) || ! std::isfinite (spacing))
+            return false;
+
         const auto& band = bands[static_cast<size_t> (bandIndex)];
         const int length = std::min (size, std::max (band.readingLength,
             nextPowerOfTwo (static_cast<int64_t> (std::min (
-                static_cast<double> (size),
-                std::ceil (size / std::max (spacing, 1.0)))))));
+                static_cast<double> (size), std::ceil (size / spacing))))));
         const bool inverted = length <= static_cast<int> (envelope.size());
 
         if (inverted)
@@ -488,11 +491,13 @@ public:
                     ? std::sqrt (power / static_cast<double> (last - first + 1))
                     : peak);
         }
+
+        return true;
     }
 
     // getColumns() over a signal of any length, as from one block holding all
     // of it with silence either side: numColumns columns `spacing` samples
-    // apart, the first centred on the signal's first sample, every band's
+    // apart (at least one), the first centred on the signal's first sample, every band's
     // into magnitudes[band · numColumns + column]. Overlapping blocks of
     // getBlockSize() each give the columns their edges can't reach (the
     // furthest getReach() in), so memory doesn't grow with the signal. With
@@ -508,7 +513,8 @@ public:
                            ConstantQReading reading, double spacing,
                            int64_t numColumns, SampleType* magnitudes) noexcept
     {
-        if (! isValid() || ! (spacing > 0.0) || numColumns < 1)
+        if (! isValid() || ! (spacing >= 1.0) || ! std::isfinite (spacing)
+            || numColumns < 1)
             return false;
 
         // Blocks start on every band's coefficient grid, so each reads the
@@ -519,7 +525,7 @@ public:
             grid = std::max (grid, static_cast<int64_t> (size / std::min (size,
                 std::max (band.readingLength, nextPowerOfTwo (static_cast<int64_t> (
                     std::min (static_cast<double> (size),
-                              std::ceil (size / std::max (spacing, 1.0)))))))));
+                              std::ceil (size / spacing))))))));
 
         double reach = 0.0;
 

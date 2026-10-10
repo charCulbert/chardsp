@@ -2831,6 +2831,26 @@ void testConstantQColumns (choc::test::TestProgress& progress)
         }
     }
 
+    // Columns a sample apart still each read their own coefficient; closer
+    // than a sample, getColumns() and getSignalColumns() refuse, writing
+    // nothing.
+    {
+        std::vector<double> columns (64, -1.0);
+        CHOC_EXPECT_TRUE (cq.getColumns (0, ConstantQReading::centre, first, 1.0, 64,
+                                         columns.data()));
+
+        for (size_t c = 1; c < columns.size(); ++c)
+            CHOC_EXPECT_TRUE (columns[c] > columns[c - 1]);
+
+        std::fill (columns.begin(), columns.end(), -1.0);
+        CHOC_EXPECT_FALSE (cq.getColumns (0, ConstantQReading::centre, first, 0.25, 64,
+                                          columns.data()));
+        CHOC_EXPECT_FALSE (cq.getSignalColumns (block.data(), size,
+                                                ConstantQReading::mean, 0.5, 64,
+                                                columns.data()));
+        CHOC_EXPECT_TRUE (columns[0] == -1.0 && columns[63] == -1.0);
+    }
+
     // A signal of any length in overlapping blocks reads as in one block
     // holding all of it, in any reading and at any spacing: within 1e-7 of
     // full scale (what the weights CiCueTea leaves out let in from the rest
