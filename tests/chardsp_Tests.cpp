@@ -3116,6 +3116,11 @@ void testAnalysisBuffer (choc::test::TestProgress& progress)
     push (buffer, 1, 16);
     CHOC_EXPECT_FALSE (buffer.read (0, 32, block.data()));
 
+    // So a longer read can fail where a later, shorter one succeeds: the
+    // last read speaks for the hop only when it's the longest.
+    CHOC_EXPECT_TRUE (buffer.read (0, 8, block.data()));
+    CHOC_EXPECT_EQ (block[0], 40.0);
+
     // Positions wrap after 2^32 samples, and hops carry on across.
     CHOC_EXPECT_TRUE (buffer.prepare (1, 64, 0xfffffff0u));
     buffer.restart (16);
