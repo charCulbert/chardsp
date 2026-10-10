@@ -1,12 +1,11 @@
 #pragma once
 
+#include <cassert>
 #include <cstdint>
 #include <limits>
 #include <type_traits>
 #include <vector>
 
-#include "choc/audio/choc_SampleBuffers.h"
-#include "choc/platform/choc_Assert.h"
 #include "signalsmith-dsp/rates.h"
 
 namespace chardsp
@@ -28,7 +27,7 @@ using SignalsmithOversampler2x =
 } // namespace detail
 
 // Block oversampling with prepared scratch storage. Signalsmith implements each
-// internal 2x stage, but only chardsp and CHOC types appear in the public API.
+// internal 2x stage; the public API takes and gives plain channel pointers.
 template <typename SampleType>
 class Oversampler
 {
@@ -87,23 +86,25 @@ public:
             && blockSize <= maxBlockSize;
     }
 
-    choc::buffer::ChannelArrayView<SampleType> upsample (
-        choc::buffer::ChannelArrayView<const SampleType> input) noexcept
+    // The high-rate block for numSamples of each input channel: numChannels
+    // channels of numSamples · factor samples, to process in place before
+    // downsample(). Null, and an assertion, unless canProcess().
+    SampleType* const* upsample (const SampleType* const* input,
+                                 uint32_t channels,
+                                 uint32_t numSamples) noexcept
     {
-        const auto valid = canProcess (input.getNumChannels(),
-                                       input.getNumFrames());
-        CHOC_ASSERT (valid);
+        const auto valid = canProcess (channels, numSamples);
+        assert (valid);
 
         if (! valid)
-            return emptyView();
+            return nullptr;
 
-        currentBlockSize = input.getNumFrames();
+        currentBlockSize = numSamples;
         const auto lowSamples = static_cast<int> (currentBlockSize);
 
         for (uint32_t channel = 0; channel < numChannels; ++channel)
-            stage1.upChannel (
-                static_cast<int> (channel),
-                input.getChannel (channel).data.data, lowSamples);
+            stage1.upChannel (static_cast<int> (channel), input[channel],
+                              lowSamples);
 
         if (factor == OversamplingFactor::x4)
         {
@@ -122,18 +123,17 @@ public:
         }
 
         hasUpsampledBlock = true;
-        return choc::buffer::createChannelArrayView (
-            channelPointers.data(), numChannels,
-            currentBlockSize * static_cast<uint32_t> (factor));
+        return channelPointers.data();
     }
 
-    bool downsample (
-        choc::buffer::ChannelArrayView<SampleType> output) noexcept
+    // The high-rate block back down into numSamples of each output channel,
+    // the same counts upsample() took. False, and an assertion, otherwise.
+    bool downsample (SampleType* const* output, uint32_t channels,
+                     uint32_t numSamples) noexcept
     {
-        const auto valid = hasUpsampledBlock
-            && output.getNumChannels() == numChannels
-            && output.getNumFrames() == currentBlockSize;
-        CHOC_ASSERT (valid);
+        const auto valid = hasUpsampledBlock && channels == numChannels
+            && numSamples == currentBlockSize;
+        assert (valid);
 
         if (! valid)
             return false;
@@ -146,9 +146,8 @@ public:
                                     stage1[channel], lowSamples * 2);
 
         for (uint32_t channel = 0; channel < numChannels; ++channel)
-            stage1.downChannel (
-                static_cast<int> (channel),
-                output.getChannel (channel).data.data, lowSamples);
+            stage1.downChannel (static_cast<int> (channel), output[channel],
+                                lowSamples);
 
         hasUpsampledBlock = false;
         return true;
@@ -172,12 +171,6 @@ public:
     uint32_t getMaximumBlockSize() const noexcept { return maxBlockSize; }
 
 private:
-    choc::buffer::ChannelArrayView<SampleType> emptyView() noexcept
-    {
-        return choc::buffer::createChannelArrayView (
-            channelPointers.data(), 0, 0);
-    }
-
     detail::SignalsmithOversampler2x<SampleType> stage1;
     detail::SignalsmithOversampler2x<SampleType> stage2;
     std::vector<SampleType*> channelPointers;

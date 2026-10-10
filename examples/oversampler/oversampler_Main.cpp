@@ -75,16 +75,12 @@ public:
             input[frame] = oscillator.next ();
         std::array<const float *, 1> inputChannels{input.data ()};
         std::array<float *, 1> outputChannels{output.data ()};
-        const auto inputView =
-            choc::buffer::createChannelArrayView (inputChannels.data (), 1, frames);
-        const auto outputView =
-            choc::buffer::createChannelArrayView (outputChannels.data (), 1, frames);
         auto &processor = mode == 1 ? two : four;
-        auto highRate = processor.upsample (inputView);
-        for (uint32_t frame = 0; frame < highRate.getNumFrames (); ++frame)
-            highRate.getSample (0, frame) =
-                std::tanh (highRate.getSample (0, frame) * amount) * .2f;
-        processor.downsample (outputView);
+        auto highRate = processor.upsample (inputChannels.data (), 1, frames);
+        const auto highRateFrames = frames * static_cast<uint32_t> (processor.getFactor ());
+        for (uint32_t frame = 0; frame < highRateFrames; ++frame)
+            highRate[0][frame] = std::tanh (highRate[0][frame] * amount) * .2f;
+        processor.downsample (outputChannels.data (), 1, frames);
         uint32_t frame = 0;
         chardsp::examples::renderMono (block, replaceOutput,
                                        [this, &frame] { return output[frame++]; });

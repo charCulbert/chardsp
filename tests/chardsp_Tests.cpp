@@ -671,6 +671,57 @@ void testSamplePlayer (choc::test::TestProgress& progress)
     CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
 }
 
+// Channels of samples for the oversampler, with the pointers it takes.
+template <typename SampleType>
+struct Block
+{
+    Block (uint32_t numChannels, uint32_t numFrames)
+        : samples (numChannels, std::vector<SampleType> (numFrames)),
+          frames (numFrames)
+    {
+        for (auto& channel : samples)
+        {
+            writable.push_back (channel.data());
+            readable.push_back (channel.data());
+        }
+    }
+
+    SampleType& getSample (uint32_t channel, uint32_t frame)
+    {
+        return samples[channel][frame];
+    }
+
+    void clear()
+    {
+        for (auto& channel : samples)
+            std::fill (channel.begin(), channel.end(), SampleType {});
+    }
+
+    uint32_t getNumChannels() const { return static_cast<uint32_t> (samples.size()); }
+    uint32_t getNumFrames() const { return frames; }
+
+    std::vector<std::vector<SampleType>> samples;
+    std::vector<SampleType*> writable;
+    std::vector<const SampleType*> readable;
+    uint32_t frames;
+};
+
+template <typename SampleType>
+SampleType* const* upsample (chardsp::Oversampler<SampleType>& oversampler,
+                             const Block<SampleType>& input)
+{
+    return oversampler.upsample (input.readable.data(), input.getNumChannels(),
+                                 input.getNumFrames());
+}
+
+template <typename SampleType>
+bool downsample (chardsp::Oversampler<SampleType>& oversampler,
+                 Block<SampleType>& output)
+{
+    return oversampler.downsample (output.writable.data(), output.getNumChannels(),
+                                   output.getNumFrames());
+}
+
 float measureOversamplingRoundTrip (
     chardsp::OversamplingFactor factor, float frequency)
 {
@@ -680,8 +731,8 @@ float measureOversamplingRoundTrip (
     constexpr float sampleRate = 48000.0f;
     chardsp::Oversampler<float> oversampler;
     oversampler.prepare (1, blockSize, factor);
-    choc::buffer::ChannelArrayBuffer<float> input (1, blockSize);
-    choc::buffer::ChannelArrayBuffer<float> output (1, blockSize);
+    Block<float> input (1, blockSize);
+    Block<float> output (1, blockSize);
     double inputSquares = 0.0;
     double outputSquares = 0.0;
 
@@ -695,8 +746,8 @@ float measureOversamplingRoundTrip (
                 * static_cast<float> (sampleIndex) / sampleRate);
         }
 
-        (void) oversampler.upsample (input);
-        oversampler.downsample (output);
+        (void) upsample (oversampler, input);
+        downsample (oversampler, output);
 
         if (block >= discardedBlocks)
             for (uint32_t frame = 0; frame < blockSize; ++frame)
@@ -722,8 +773,8 @@ float measureOversamplingDownsampleGain (
     constexpr float sampleRate = 48000.0f;
     chardsp::Oversampler<float> oversampler;
     oversampler.prepare (1, blockSize, factor);
-    choc::buffer::ChannelArrayBuffer<float> input (1, blockSize);
-    choc::buffer::ChannelArrayBuffer<float> output (1, blockSize);
+    Block<float> input (1, blockSize);
+    Block<float> output (1, blockSize);
     input.clear();
     double inputSquares = 0.0;
     double outputSquares = 0.0;
@@ -731,23 +782,22 @@ float measureOversamplingDownsampleGain (
 
     for (uint32_t block = 0; block < blockCount; ++block)
     {
-        auto highRateBlock = oversampler.upsample (input);
+        auto highRateBlock = upsample (oversampler, input);
+        const auto highRateFrames = blockSize * static_cast<uint32_t> (factor);
 
-        for (uint32_t frame = 0;
-             frame < highRateBlock.getNumFrames(); ++frame)
+        for (uint32_t frame = 0; frame < highRateFrames; ++frame)
         {
-            const auto sampleIndex = block
-                    * highRateBlock.getNumFrames() + frame;
+            const auto sampleIndex = block * highRateFrames + frame;
             const auto sample = std::sin (
                 6.283185307179586f * frequency
                 * static_cast<float> (sampleIndex) / highRate);
-            highRateBlock.getSample (0, frame) = sample;
+            highRateBlock[0][frame] = sample;
 
             if (block >= discardedBlocks)
                 inputSquares += static_cast<double> (sample) * sample;
         }
 
-        oversampler.downsample (output);
+        downsample (oversampler, output);
 
         if (block >= discardedBlocks)
             for (uint32_t frame = 0; frame < blockSize; ++frame)
@@ -793,8 +843,8 @@ std::array<float, 4096> renderCubic (
     constexpr float frequency = 9000.0f;
     constexpr float sampleRate = 48000.0f;
     std::array<float, measuredSamples> result {};
-    choc::buffer::ChannelArrayBuffer<float> input (1, blockSize);
-    choc::buffer::ChannelArrayBuffer<float> output (1, blockSize);
+    Block<float> input (1, blockSize);
+    Block<float> output (1, blockSize);
     chardsp::Oversampler<float> oversampler;
     oversampler.prepare (1, blockSize, chardsp::OversamplingFactor::x4);
     const auto allocationsBefore = allocationCount.load();
@@ -812,15 +862,15 @@ std::array<float, 4096> renderCubic (
 
         if (oversampled)
         {
-            auto highRate = oversampler.upsample (input);
+            auto highRate = upsample (oversampler, input);
 
-            for (uint32_t frame = 0; frame < highRate.getNumFrames(); ++frame)
+            for (uint32_t frame = 0; frame < blockSize * 4; ++frame)
             {
-                const auto sample = highRate.getSample (0, frame);
-                highRate.getSample (0, frame) = sample * sample * sample;
+                const auto sample = highRate[0][frame];
+                highRate[0][frame] = sample * sample * sample;
             }
 
-            oversampler.downsample (output);
+            downsample (oversampler, output);
         }
         else
         {
@@ -860,16 +910,15 @@ void testOversampler (choc::test::TestProgress& progress)
         CHOC_EXPECT_FALSE (oversampler.canProcess (1, 128));
         CHOC_EXPECT_FALSE (oversampler.canProcess (2, 129));
 
-        choc::buffer::ChannelArrayBuffer<float> input (2, 128);
-        choc::buffer::ChannelArrayBuffer<float> output (2, 128);
+        Block<float> input (2, 128);
+        Block<float> output (2, 128);
         input.clear();
         input.getSample (0, 0) = 1.0f;
         const auto allocationsBefore = allocationCount.load();
-        auto highRate = oversampler.upsample (input);
-        const auto didDownsample = oversampler.downsample (output);
+        auto highRate = upsample (oversampler, input);
+        const auto didDownsample = downsample (oversampler, output);
         const auto allocationsAfterProcess = allocationCount.load();
-        CHOC_EXPECT_EQ (highRate.getNumChannels(), 2);
-        CHOC_EXPECT_EQ (highRate.getNumFrames(), 128u * static_cast<uint32_t> (factor));
+        CHOC_EXPECT_TRUE (highRate != nullptr && highRate[0] != highRate[1]);
         CHOC_EXPECT_TRUE (didDownsample);
         CHOC_EXPECT_TRUE (allocationsAfterProcess == allocationsBefore);
 
@@ -894,8 +943,8 @@ void testOversampler (choc::test::TestProgress& progress)
         oversampler.reset();
         CHOC_EXPECT_TRUE (allocationCount.load() == allocationsBeforeReset);
         input.clear();
-        highRate = oversampler.upsample (input);
-        CHOC_EXPECT_TRUE (oversampler.downsample (output));
+        highRate = upsample (oversampler, input);
+        CHOC_EXPECT_TRUE (downsample (oversampler, output));
 
         for (uint32_t channel = 0; channel < 2; ++channel)
             for (uint32_t frame = 0; frame < 128; ++frame)
@@ -931,13 +980,14 @@ void testOversampler (choc::test::TestProgress& progress)
     chardsp::Oversampler<double> doubleOversampler;
     CHOC_EXPECT_TRUE (doubleOversampler.prepare (
         1, 16, chardsp::OversamplingFactor::x2));
-    choc::buffer::ChannelArrayBuffer<double> doubleInput (1, 16);
-    choc::buffer::ChannelArrayBuffer<double> doubleOutput (1, 16);
+    Block<double> doubleInput (1, 16);
+    Block<double> doubleOutput (1, 16);
     doubleInput.clear();
     doubleInput.getSample (0, 0) = 1.0;
-    auto doubleHighRate = doubleOversampler.upsample (doubleInput);
-    CHOC_EXPECT_EQ (doubleHighRate.getNumFrames(), 32);
-    CHOC_EXPECT_TRUE (doubleOversampler.downsample (doubleOutput));
+    auto doubleHighRate = upsample (doubleOversampler, doubleInput);
+    CHOC_EXPECT_TRUE (doubleHighRate != nullptr);
+    doubleHighRate[0][31] = 0.0; // 16 · 2 samples
+    CHOC_EXPECT_TRUE (downsample (doubleOversampler, doubleOutput));
     CHOC_EXPECT_TRUE (std::isfinite (doubleOutput.getSample (0, 0)));
 }
 

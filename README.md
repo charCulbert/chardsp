@@ -57,8 +57,8 @@ allocation-free during sample processing, and support `float` or `double`.
   normalized phase accumulation with arbitrary advances and fractional wrap
   timing.
 - [`chardsp_Oversampler.h`](chardsp/chardsp_Oversampler.h) — prepared
-  multichannel Signalsmith FIR 2x/4x block upsampling and downsampling with
-  CHOC views and latency reporting.
+  multichannel Signalsmith FIR 2x/4x block upsampling and downsampling over
+  plain channel pointers, with latency reporting.
 
 - [`chardsp_Portamento.h`](chardsp/chardsp_Portamento.h) — semitone-space
   pitch glides with variable curve and constant-time-to-constant-rate morphing.
