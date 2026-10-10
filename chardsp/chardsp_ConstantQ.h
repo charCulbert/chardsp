@@ -93,10 +93,10 @@ enum class ConstantQReading
 // process() takes one real FFT of a block; everything after reads that
 // spectrum. A coefficient at any time is a weighted sum over the band's bins,
 // so one value per band (at the block's centre, say) costs far less than
-// CiCueTea's inverse FFT per band. If real-time speed is ever
-// needed, a multirate design like librosa's (the rate halved each octave down,
-// so each octave takes a small FFT) could cut the cost several times, with the
-// resampler's quality limiting precision.
+// CiCueTea's inverse FFT per band. The FFT of the whole block is most of the
+// cost. A multirate design (as in librosa), halving the sample rate for each
+// octave down so each octave takes a small FFT, would reduce that work, with
+// the resampling filters' quality limiting precision.
 //
 // Like CiCueTea's, the transform treats the block as periodic: a whole file
 // analysed as one block wants silence padded at both ends. getSignalColumns()
@@ -495,9 +495,10 @@ public:
     // apart, the first centred on the signal's first sample, every band's
     // into magnitudes[band · numColumns + column]. Overlapping blocks of
     // getBlockSize() each give the columns their edges can't reach (the
-    // furthest getReach() in), so memory doesn't grow with the signal. Each
-    // column is within 1e-5 of full scale of the one block's whatever the
-    // signal, and nearer 1e-7 for music or noise.
+    // furthest getReach() in), so memory doesn't grow with the signal. With
+    // samples within ±1, each column is within 1e-5 of the one block's (the
+    // bound scales with the signal's peak); with music or noise the tests
+    // see nearer 1e-7.
     //
     // False, doing nothing, if the block is too short to give any; eight
     // times minimumBlockSize() gives about 60% of each. A design whose top
