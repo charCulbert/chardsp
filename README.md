@@ -17,6 +17,11 @@ allocation-free during sample processing, and support `float` or `double`.
   with lowpass, highpass, bandpass, notch, peak, and shelf designs.
 - [`chardsp_ColoredNoise.h`](chardsp/chardsp_ColoredNoise.h) — deterministic
   seeded brown, pink, white, and blue noise.
+- [`chardsp_ConstantQ.h`](chardsp/chardsp_ConstantQ.h) — constant-Q
+  transform after CiCueTea's sparse NSGF-CQT: any bands per octave and
+  tuning, complex coefficients per band at any time in a block of any power
+  of two, centre, peak, or mean readings over a stretch, and a stereo
+  streaming helper that yields a spectrogram column of dB per hop.
 - [`chardsp_DCBlocker.h`](chardsp/chardsp_DCBlocker.h) — first-order DC
   removal with adjustable cutoff and bypass.
 - [`chardsp_DelayLine.h`](chardsp/chardsp_DelayLine.h) — fixed-capacity
@@ -74,6 +79,10 @@ Pinned Git submodules:
 - [CHOC](https://github.com/Tracktion/choc) — ISC
 - [Signalsmith DSP](https://github.com/Signalsmith-Audio/dsp) — MIT
 - [Signalsmith elliptic-blep](https://github.com/Signalsmith-Audio/elliptic-blep) — MIT
+
+`chardsp_ConstantQ.h` is derived from
+[CiCueTea](https://github.com/jdsierral/CiCueTea) by Juan Sierra — MIT; its
+notice is in that header.
 
 chardsp is ISC-licensed; see [LICENSE](LICENSE). Source distributions must
 retain the license files in this repository and its submodules.

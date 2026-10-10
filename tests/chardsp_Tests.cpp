@@ -15,6 +15,7 @@
 #include "chardsp/chardsp_BasicSynthVoice.h"
 #include "chardsp/chardsp_Biquad.h"
 #include "chardsp/chardsp_ColoredNoise.h"
+#include "chardsp/chardsp_ConstantQ.h"
 #include "chardsp/chardsp_DCBlocker.h"
 #include "chardsp/chardsp_DelayLine.h"
 #include "chardsp/chardsp_Detectors.h"
@@ -2508,6 +2509,264 @@ void testMonoVoiceController (choc::test::TestProgress& progress)
     CHOC_EXPECT_FALSE (small.isGateActive());
 }
 
+double decibels (double magnitude)
+{
+    return 20.0 * std::log10 (std::max (1.0e-8, magnitude));
+}
+
+void testConstantQBands (choc::test::TestProgress& progress)
+{
+    using chardsp::ConstantQ;
+    CHOC_EXPECT_EQ (ConstantQ<double>::minimumBlockSize (48000.0, 24.0, 55.0),
+                    32768);
+
+    // Bands at A4 · 2^(k / bandsPerOctave), from minFrequency to maxFrequency.
+    chardsp::ConstantQDesign design;
+    design.sampleRate = 48000.0;
+    design.bandsPerOctave = 24.0;
+    design.minFrequency = 55.0;
+    design.maxFrequency = 8000.0;
+    ConstantQ<double> cq;
+    CHOC_EXPECT_TRUE (cq.prepare (design));
+    CHOC_EXPECT_EQ (cq.getBlockSize(), 32768);
+    CHOC_EXPECT_EQ (cq.getNumBands(), 173); // k = -72 to 100: 55 Hz to 7.9 kHz
+
+    for (int b = 0; b < cq.getNumBands(); ++b)
+        CHOC_EXPECT_NEAR (cq.getFrequencies()[static_cast<size_t> (b)],
+                          440.0 * std::exp2 ((b - 72) / 24.0), 1.0e-9);
+
+    design.referenceFrequency = 432.0;
+    design.bandsPerOctave = 12.0;
+    CHOC_EXPECT_TRUE (cq.prepare (design));
+    CHOC_EXPECT_EQ (cq.getNumBands(), 86); // k = -35 to 50: 57.2 Hz to 7.7 kHz
+    CHOC_EXPECT_NEAR (cq.getFrequencies()[11], 108.0, 1.0e-9); // A2
+    CHOC_EXPECT_NEAR (cq.getFrequencies()[35], 432.0, 1.0e-9); // A4
+
+    // Fractional bands per octave.
+    design.referenceFrequency = 440.0;
+    design.bandsPerOctave = 18.5;
+    CHOC_EXPECT_TRUE (cq.prepare (design));
+    CHOC_EXPECT_NEAR (cq.getFrequencies()[1] / cq.getFrequencies()[0],
+                      std::exp2 (1.0 / 18.5), 1.0e-12);
+
+    // Designs it refuses: a band at Nyquist, a block that isn't a power of
+    // two, one too short for the lowest band, no band in range.
+    auto bad = design;
+    bad.maxFrequency = 24000.0;
+    CHOC_EXPECT_FALSE (cq.prepare (bad));
+    CHOC_EXPECT_FALSE (cq.isValid());
+    CHOC_EXPECT_EQ (cq.getNumBands(), 0);
+    bad = design;
+    bad.blockSize = 30000;
+    CHOC_EXPECT_FALSE (cq.prepare (bad));
+    bad.blockSize = 1024;
+    CHOC_EXPECT_FALSE (cq.prepare (bad));
+    bad = design;
+    bad.minFrequency = 441.0;
+    bad.maxFrequency = 442.0;
+    CHOC_EXPECT_FALSE (cq.prepare (bad));
+}
+
+void testConstantQReadings (choc::test::TestProgress& progress)
+{
+    using chardsp::ConstantQReading;
+    chardsp::ConstantQDesign design;
+    design.sampleRate = 48000.0;
+    design.bandsPerOctave = 24.0;
+    design.minFrequency = 55.0;
+    design.maxFrequency = 16000.0;
+    chardsp::ConstantQ<double> cq;
+    CHOC_EXPECT_TRUE (cq.prepare (design));
+    const int size = cq.getBlockSize();
+    const double middle = 0.5 * size;
+    std::vector<double> block (static_cast<size_t> (size));
+
+    // A full-scale sine on a band's centre reads 0 dB there, in every
+    // reading, and less in the bands either side. (The lowest bands span so
+    // few bins that the block's edges show: there it reads within 1 dB.)
+    for (int b : { 0, 50, 120, cq.getNumBands() - 1 })
+    {
+        const double frequency = cq.getFrequencies()[static_cast<size_t> (b)];
+
+        for (int i = 0; i < size; ++i)
+            block[static_cast<size_t> (i)] = std::sin (
+                6.283185307179586 * frequency * i / design.sampleRate + 0.4);
+
+        cq.process (block.data());
+        const double tolerance = b == 0 ? 1.0 : 0.01;
+        CHOC_EXPECT_NEAR (decibels (cq.getCentreMagnitude (b)), 0.0, tolerance);
+
+        for (auto reading : { ConstantQReading::peak, ConstantQReading::mean })
+            CHOC_EXPECT_NEAR (decibels (cq.getMagnitude (
+                b, reading, middle - 800.0, middle + 800.0)), 0.0, tolerance);
+
+        if (b > 0)
+            CHOC_EXPECT_TRUE (decibels (cq.getCentreMagnitude (b - 1)) < -0.5);
+
+        if (b + 1 < cq.getNumBands())
+            CHOC_EXPECT_TRUE (decibels (cq.getCentreMagnitude (b + 1)) < -0.5);
+    }
+
+    // The coefficients CiCueTea gives, and the same at any time.
+    const int band = 100;
+    std::vector<std::complex<double>> coefficients (
+        static_cast<size_t> (cq.getNumCoefficients (band)));
+    cq.getCoefficients (band, coefficients.data());
+    const auto length = static_cast<int> (coefficients.size());
+    CHOC_EXPECT_NEAR (std::abs (coefficients[static_cast<size_t> (length / 2)]),
+                      cq.getCentreMagnitude (band), 1.0e-12);
+
+    for (int n : { 0, 3, length / 2 + 1, length - 1 })
+        CHOC_EXPECT_NEAR (std::abs (coefficients[static_cast<size_t> (n)]
+                                    - cq.getCoefficient (
+                                        band, static_cast<double> (n) * size / length)),
+                          0.0, 1.0e-12);
+
+    // Columns across the block: the steady sine (on the top band, the last
+    // above) reads 0 dB in each.
+    std::vector<double> columns (20);
+    cq.getColumns (cq.getNumBands() - 1, ConstantQReading::mean, middle - 10000.0, 1000.0, 20,
+                   columns.data());
+
+    for (auto magnitude : columns)
+        CHOC_EXPECT_NEAR (decibels (magnitude), 0.0, 0.01);
+
+    // Float follows double.
+    chardsp::ConstantQ<float> single;
+    CHOC_EXPECT_TRUE (single.prepare (design));
+    std::vector<float> floatBlock (block.begin(), block.end());
+    single.process (floatBlock.data());
+    CHOC_EXPECT_NEAR (decibels (single.getCentreMagnitude (cq.getNumBands() - 1)),
+                      0.0, 0.01);
+
+    // Silence: nothing in any band.
+    std::fill (block.begin(), block.end(), 0.0);
+    cq.process (block.data());
+
+    for (int b = 0; b < cq.getNumBands(); ++b)
+        CHOC_EXPECT_EQ (cq.getCentreMagnitude (b), 0.0);
+
+    // Readings allocate nothing.
+    const auto allocationsBefore = allocationCount.load();
+    cq.process (block.data());
+
+    for (int b = 0; b < cq.getNumBands(); ++b)
+    {
+        (void) cq.getMagnitude (b, ConstantQReading::peak, middle - 800.0,
+                                middle + 800.0);
+        (void) cq.getMagnitude (b, ConstantQReading::mean, middle - 800.0,
+                                middle + 800.0);
+        (void) cq.getCoefficient (b, 1234.5);
+    }
+
+    cq.getColumns (10, ConstantQReading::peak, 0.0, 512.0, 20, columns.data());
+    cq.getCoefficients (band, coefficients.data());
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
+}
+
+void testConstantQStream (choc::test::TestProgress& progress)
+{
+    using chardsp::ConstantQReading;
+    chardsp::ConstantQDesign design;
+    design.sampleRate = 48000.0;
+    design.bandsPerOctave = 12.0;
+    design.minFrequency = 55.0;
+    design.maxFrequency = 16000.0;
+    const int hop = 1600;
+    const int size = chardsp::ConstantQ<float>::minimumBlockSize (48000.0, 12.0, 55.0);
+
+    // The levels a stream shows for `input`: every column, as columns[band].
+    const auto run = [&] (const std::vector<float>& input, ConstantQReading reading)
+    {
+        chardsp::ConstantQStream<float> stream;
+        stream.prepare (size);
+        CHOC_EXPECT_TRUE (stream.configure (design, hop, reading));
+        const auto bands = static_cast<size_t> (stream.getTransform().getNumBands());
+        std::vector<std::vector<float>> columns (bands);
+        std::vector<float> column (bands);
+        uint32_t advanced = 0, total = 0;
+
+        for (size_t i = 0; i + 256 <= input.size(); i += 256)
+        {
+            stream.push (input.data() + i, input.data() + i, 256);
+
+            while (stream.next (column.data(), advanced, 1000))
+            {
+                total += advanced;
+
+                for (size_t b = 0; b < bands; ++b)
+                    columns[b].push_back (column[b]);
+            }
+        }
+
+        CHOC_EXPECT_EQ (total, static_cast<uint32_t> (input.size() / hop * hop));
+        return columns;
+    };
+
+    chardsp::ConstantQ<float> bands;
+    bands.prepare (design);
+    const auto nearest = [&] (double frequency)
+    {
+        size_t best = 0;
+
+        for (size_t b = 0; b < bands.getFrequencies().size(); ++b)
+            if (std::abs (std::log (bands.getFrequencies()[b] / frequency))
+                < std::abs (std::log (bands.getFrequencies()[best] / frequency)))
+                best = b;
+
+        return best;
+    };
+
+    // Silence reads the floor.
+    const std::vector<float> silence (static_cast<size_t> (size + 10 * hop), 0.0f);
+
+    for (auto& band : run (silence, ConstantQReading::mean))
+        CHOC_EXPECT_EQ (band.back(), -160.0f);
+
+    // A steady sine reads the same in all three.
+    std::vector<float> sine (silence.size());
+
+    for (size_t i = 0; i < sine.size(); ++i)
+        sine[i] = static_cast<float> (std::sin (6.283185307179586 * 4000.0 * i / 48000.0));
+
+    const auto band = nearest (4000.0);
+    const auto centre = run (sine, ConstantQReading::centre)[band].back();
+    CHOC_EXPECT_NEAR (run (sine, ConstantQReading::peak)[band].back(), centre, 0.01f);
+    CHOC_EXPECT_NEAR (run (sine, ConstantQReading::mean)[band].back(), centre, 0.01f);
+
+    // A click halfway between two columns' centres (column k is centred
+    // size / 2 before k · hop): centre misses it at 12 kHz, peak and mean
+    // don't.
+    std::vector<float> click (silence.size(), 0.0f);
+    click[static_cast<size_t> (8 * hop - size / 2 + hop / 2)] = 1.0f;
+    const auto high = nearest (12000.0);
+    const auto loudest = [&] (ConstantQReading reading)
+    {
+        const auto levels = run (click, reading)[high];
+        return *std::max_element (levels.begin(), levels.end());
+    };
+    CHOC_EXPECT_TRUE (loudest (ConstantQReading::centre) < -120.0f);
+    CHOC_EXPECT_TRUE (loudest (ConstantQReading::peak) > -40.0f);
+    CHOC_EXPECT_TRUE (loudest (ConstantQReading::mean) > -60.0f);
+
+    // Columns allocate nothing.
+    chardsp::ConstantQStream<float> stream;
+    stream.prepare (size);
+    stream.configure (design, hop, ConstantQReading::mean);
+    std::vector<float> column (static_cast<size_t> (stream.getTransform().getNumBands()));
+    uint32_t advanced = 0;
+    const auto allocationsBefore = allocationCount.load();
+
+    for (size_t i = 0; i + 256 <= sine.size(); i += 256)
+    {
+        stream.push (sine.data() + i, sine.data() + i, 256);
+
+        while (stream.next (column.data(), advanced)) {}
+    }
+
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
+}
+
 } // namespace
 
 void* operator new (std::size_t size)
@@ -2556,6 +2815,9 @@ int main()
     { CHOC_TEST (svf_behavior); testStateVariableFilterBehavior (progress); }
     { CHOC_TEST (colored_noise_reference); testColoredNoiseParity (progress); }
     { CHOC_TEST (colored_noise_behavior); testColoredNoiseBehavior (progress); }
+    { CHOC_TEST (constant_q_bands); testConstantQBands (progress); }
+    { CHOC_TEST (constant_q_readings); testConstantQReadings (progress); }
+    { CHOC_TEST (constant_q_stream); testConstantQStream (progress); }
     { CHOC_TEST (simple_downsampler_reference);
       testSimpleDownsamplerParity (progress); }
     { CHOC_TEST (simple_downsampler_behavior);
