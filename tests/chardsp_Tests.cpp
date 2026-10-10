@@ -34,6 +34,7 @@
 #include "chardsp/chardsp_SamplePlayer.h"
 #include "chardsp/chardsp_SimpleDownsampler.h"
 #include "chardsp/chardsp_SmoothedValue.h"
+#include "chardsp/chardsp_Spectrum.h"
 #include "chardsp/chardsp_StateVariableFilter.h"
 #include "chardsp/chardsp_VoicePool.h"
 #include "choc/platform/choc_UnitTest.h"
@@ -2990,6 +2991,157 @@ void testConstantQStream (choc::test::TestProgress& progress)
     CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
 }
 
+void testSpectrum (choc::test::TestProgress& progress)
+{
+    using chardsp::SpectrumWindow;
+    const auto sine = [] (std::vector<double>& block, double cycles,
+                          double amplitude)
+    {
+        for (size_t i = 0; i < block.size(); ++i)
+            block[i] = amplitude * std::sin (6.283185307179586 * cycles * i
+                                             / block.size() + 0.3);
+    };
+
+    // A sine on a bin's centre reads its amplitude there, with every window,
+    // symmetric or periodic, padded or not.
+    chardsp::Spectrum<double> spectrum;
+    std::vector<double> block;
+
+    for (int size : { 256, 2048, 16384 })
+        for (auto window : { SpectrumWindow::rectangular, SpectrumWindow::hann,
+                             SpectrumWindow::hamming, SpectrumWindow::blackman,
+                             SpectrumWindow::blackmanHarris })
+            for (bool periodic : { false, true })
+                for (int padding : { 1, 2 })
+                {
+                    chardsp::SpectrumDesign design;
+                    design.size = size;
+                    design.fftSize = size * padding;
+                    design.window = window;
+                    design.periodic = periodic;
+                    CHOC_EXPECT_TRUE (spectrum.prepare (design));
+                    CHOC_EXPECT_EQ (spectrum.getNumBins(), size * padding / 2 + 1);
+                    block.resize (static_cast<size_t> (size));
+                    sine (block, size / 8, 0.5);
+                    spectrum.process (block.data());
+                    CHOC_EXPECT_NEAR (decibels (spectrum.getMagnitude (
+                        size * padding / 8)), decibels (0.5), 0.05);
+                }
+
+    // A constant reads its value at DC; silence reads nothing anywhere.
+    chardsp::SpectrumDesign design;
+    design.size = 1024;
+    CHOC_EXPECT_TRUE (spectrum.prepare (design));
+    CHOC_EXPECT_EQ (spectrum.getDesign().fftSize, 1024);
+    block.assign (1024, 0.25);
+    spectrum.process (block.data());
+    CHOC_EXPECT_NEAR (spectrum.getMagnitude (0), 0.25, 1.0e-12);
+    std::fill (block.begin(), block.end(), 0.0);
+    spectrum.process (block.data());
+    std::vector<double> magnitudes (513);
+    spectrum.getMagnitudes (magnitudes.data());
+    CHOC_EXPECT_TRUE (*std::max_element (magnitudes.begin(), magnitudes.end()) == 0.0);
+
+    // Time runs from the block's middle: a cosine peaking there is real.
+    design.periodic = true;
+    spectrum.prepare (design);
+    for (size_t i = 0; i < block.size(); ++i)
+        block[i] = std::cos (6.283185307179586 * 40.0
+                             * (static_cast<double> (i) - 512.0) / 1024.0);
+
+    spectrum.process (block.data());
+    CHOC_EXPECT_NEAR (spectrum.getBins()[40].imag(), 0.0, 1.0e-9);
+    CHOC_EXPECT_TRUE (spectrum.getBins()[40].real() > 0.0);
+    CHOC_EXPECT_NEAR (spectrum.getBins()[40].real() * spectrum.getScale(), 1.0, 1.0e-9);
+
+    // Designs it refuses.
+    design.periodic = false;
+    design.fftSize = 512;
+    CHOC_EXPECT_FALSE (spectrum.prepare (design));
+    CHOC_EXPECT_FALSE (spectrum.isValid());
+    design.fftSize = 1536;
+    CHOC_EXPECT_FALSE (spectrum.prepare (design));
+    design.size = 2;
+    design.fftSize = 0;
+    CHOC_EXPECT_FALSE (spectrum.prepare (design));
+
+    // A spectrogram: the newest block of each channel every hop, through an
+    // AnalysisBuffer, from 1, 2 and 6 channels, each a sine on its own bin.
+    for (int channels : { 1, 2, 6 })
+    {
+        chardsp::SpectrumDesign live;
+        live.size = 1024;
+        chardsp::Spectrum<float> analysis;
+        CHOC_EXPECT_TRUE (analysis.prepare (live));
+        chardsp::AnalysisBuffer<float> buffer;
+        buffer.prepare (channels, 4096);
+        buffer.restart (256);
+        std::vector<std::vector<float>> input (6, std::vector<float> (128));
+        std::vector<const float*> pointers;
+
+        for (auto& channel : input)
+            pointers.push_back (channel.data());
+
+        std::vector<float> samples (1024), column (513);
+        int columns = 0;
+        bool own = true;
+
+        for (int n = 0; n < 8192; n += 128)
+        {
+            for (int c = 0; c < channels; ++c)
+                for (int i = 0; i < 128; ++i)
+                    input[static_cast<size_t> (c)][static_cast<size_t> (i)] =
+                        static_cast<float> (std::sin (6.283185307179586
+                            * (32 + 16 * c) * (n + i) / 1024.0));
+
+            buffer.push (pointers.data(), channels, 128);
+
+            while (buffer.nextHop (1024))
+            {
+                ++columns;
+
+                for (int c = 0; c < channels; ++c)
+                {
+                    buffer.read (c, 1024, samples.data());
+                    analysis.process (samples.data());
+                    analysis.getMagnitudes (column.data());
+                    const auto loudest = std::max_element (column.begin(), column.end());
+                    // (The first blocks reach back before the sines.)
+                    own = own && (buffer.getPosition() < 1024
+                        || (loudest - column.begin() == 32 + 16 * c
+                            && std::abs (decibels (*loudest)) < 0.05));
+                }
+            }
+        }
+
+        CHOC_EXPECT_EQ (columns, 32);
+        CHOC_EXPECT_TRUE (own);
+    }
+
+    // Float follows double; processing and reading allocate nothing.
+    chardsp::Spectrum<float> single;
+    design.size = 2048;
+    design.fftSize = 4096;
+    design.window = SpectrumWindow::blackmanHarris;
+    design.periodic = true;
+    CHOC_EXPECT_TRUE (single.prepare (design));
+    CHOC_EXPECT_TRUE (spectrum.prepare (design));
+    block.resize (2048);
+    sine (block, 100.25, 1.0);
+    std::vector<float> floatBlock (block.begin(), block.end());
+    std::vector<float> floatMagnitudes (2049);
+    magnitudes.resize (2049);
+    const auto allocationsBefore = allocationCount.load();
+    single.process (floatBlock.data());
+    single.getMagnitudes (floatMagnitudes.data());
+    spectrum.process (block.data());
+    spectrum.getMagnitudes (magnitudes.data());
+    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBefore);
+
+    for (size_t k = 190; k < 211; ++k)
+        CHOC_EXPECT_NEAR (floatMagnitudes[k], magnitudes[k], 1.0e-5);
+}
+
 } // namespace
 
 void* operator new (std::size_t size)
@@ -3042,6 +3194,7 @@ int main()
     { CHOC_TEST (constant_q_bands); testConstantQBands (progress); }
     { CHOC_TEST (constant_q_readings); testConstantQReadings (progress); }
     { CHOC_TEST (constant_q_stream); testConstantQStream (progress); }
+    { CHOC_TEST (spectrum); testSpectrum (progress); }
     { CHOC_TEST (simple_downsampler_reference);
       testSimpleDownsamplerParity (progress); }
     { CHOC_TEST (simple_downsampler_behavior);

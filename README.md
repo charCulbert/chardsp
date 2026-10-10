@@ -68,6 +68,10 @@ allocation-free during sample processing, and support `float` or `double`.
   allocation-free power-of-two decimation for externally rendered samples.
 - [`chardsp_SmoothedValue.h`](chardsp/chardsp_SmoothedValue.h) — finite
   linear or multiplicative ramps with retargeting and fast skipping.
+- [`chardsp_Spectrum.h`](chardsp/chardsp_Spectrum.h) — windowed,
+  zero-padded, zero-phase FFT of a block with rectangular, Hann, Hamming,
+  Blackman, or Blackman-Harris windows, symmetric or periodic, and each bin's
+  amplitude relative to a full-scale sine.
 - [`chardsp_StateVariableFilter.h`](chardsp/chardsp_StateVariableFilter.h) —
   TPT state-variable filter with cutoff, Q, selectable lowpass/bandpass/highpass,
   and simultaneous lowpass, bandpass, highpass, and notch outputs.
@@ -120,6 +124,23 @@ Or add the repository with CMake:
 ```cmake
 add_subdirectory(path/to/chardsp)
 target_link_libraries(my_target PRIVATE chardsp::chardsp)
+```
+
+A live spectrogram: the audio thread pushes into an `AnalysisBuffer`, and
+another thread reads a column per hop for each channel:
+
+```cpp
+// Audio thread
+buffer.push (channels, numChannels, numSamples);
+
+// Analysis thread
+while (buffer.nextHop (design.size))
+    for (int c = 0; c < buffer.getNumChannels(); ++c)
+    {
+        buffer.read (c, design.size, block.data());
+        spectrum.process (block.data());
+        spectrum.getMagnitudes (columns[c].data());
+    }
 ```
 
 ## Build
