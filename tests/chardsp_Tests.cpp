@@ -2929,6 +2929,20 @@ void testAnalysisBuffer (choc::test::TestProgress& progress)
     push (buffer, 1, 16);
     CHOC_EXPECT_FALSE (buffer.read (0, 32, block.data()));
 
+    // Positions wrap after 2^32 samples, and hops carry on across.
+    CHOC_EXPECT_TRUE (buffer.prepare (1, 64, 0xfffffff0u));
+    buffer.restart (16);
+    CHOC_EXPECT_EQ (buffer.getWritePosition(), 0xfffffff0u);
+    pushed = 0;
+    push (buffer, 1, 40);
+    CHOC_EXPECT_TRUE (buffer.nextHop (32));
+    CHOC_EXPECT_EQ (buffer.getPosition(), 0u);
+    CHOC_EXPECT_TRUE (buffer.read (0, 32, block.data()));
+    CHOC_EXPECT_TRUE (block[15] == 0.0 && block[16] == 0.0 && block[31] == 15.0);
+    CHOC_EXPECT_TRUE (buffer.nextHop (32));
+    CHOC_EXPECT_EQ (buffer.getPosition(), 16u);
+    CHOC_EXPECT_FALSE (buffer.nextHop (32));
+
     // Or past `keep` hops, to the newest `keep`.
     CHOC_EXPECT_TRUE (buffer.prepare (1, 8192));
     pushed = 0;

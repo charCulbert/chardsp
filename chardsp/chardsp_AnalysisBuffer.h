@@ -14,9 +14,10 @@ namespace chardsp
 // reader asks for the next hop, then copies the newest samples up to its end
 // from any channel, as many as its block needs.
 //
-// Positions count samples pushed since prepare(), wrapping after 2^32. A hop
-// ends a whole number of hops after where the reader last restarted, so hops
-// keep their grid when the reader skips some.
+// Positions count samples pushed, from prepare()'s firstPosition (a host's
+// sample clock, say), wrapping after 2^32. A hop ends a whole number of hops
+// after where the reader last restarted, so hops keep their grid when the
+// reader skips some.
 //
 // prepare() allocates, while nothing pushes or reads. push() runs on the audio
 // thread and only copies samples into the ring; restart(), nextHop() and
@@ -33,7 +34,8 @@ public:
 
     // Room for at least `capacity` samples of each channel (rounded up to a
     // power of two), all silent. The reader then restart()s.
-    bool prepare (int newNumChannels, int capacity)
+    bool prepare (int newNumChannels, int capacity,
+                  uint32_t firstPosition = 0)
     {
         if (newNumChannels < 1 || capacity < 1 || capacity > (1 << 30))
             return false;
@@ -47,9 +49,11 @@ public:
         ringSize = static_cast<uint32_t> (size);
         ring.reset (new std::atomic<SampleType>[
             static_cast<size_t> (numChannels) * ringSize]());
-        writeIndex.store (0, std::memory_order_release);
-        writing.store (0, std::memory_order_relaxed);
-        position = advanced = 0;
+        writeIndex.store (firstPosition, std::memory_order_release);
+        writing.store (firstPosition, std::memory_order_relaxed);
+        filled.store (0, std::memory_order_relaxed);
+        position = firstPosition;
+        advanced = 0;
         skipped = hop = 0;
         return true;
     }
@@ -84,6 +88,13 @@ public:
                     input != nullptr ? input[i] : SampleType {},
                     std::memory_order_relaxed);
         }
+
+        const uint32_t before = filled.load (std::memory_order_relaxed);
+
+        if (before < ringSize)
+            filled.store (static_cast<uint32_t> (std::min<uint64_t> (
+                              ringSize, uint64_t { before } + numSamples)),
+                          std::memory_order_relaxed);
 
         writeIndex.store (start + static_cast<uint32_t> (numSamples),
                           std::memory_order_release);
@@ -123,7 +134,8 @@ public:
         const auto step = static_cast<uint32_t> (hop);
         const uint32_t end = getWritePosition();
 
-        if (end < static_cast<uint32_t> (blockSize))
+        if (filled.load (std::memory_order_relaxed)
+            < static_cast<uint32_t> (blockSize))
             return false;
 
         const uint32_t waiting = (end - position) / step;
@@ -177,6 +189,7 @@ private:
     std::unique_ptr<std::atomic<SampleType>[]> ring; // channel after channel
     std::atomic<uint32_t> writeIndex { 0 };
     std::atomic<uint32_t> writing { 0 }; // the end of the push under way
+    std::atomic<uint32_t> filled { 0 }; // samples pushed, up to ringSize
     uint32_t position = 0, advanced = 0; // the reader's
     int skipped = 0, hop = 0;
 };
