@@ -25,6 +25,7 @@ namespace oscillator_detail
 template <typename SampleType>
 using PhaseState = OscillatorPhase<SampleType>;
 
+// Two-sample polynomial band-limited step (PolyBLEP, after Valimaki and Huovilainen, 2007).
 template <typename SampleType>
 SampleType polyBlep (SampleType phase, SampleType increment) noexcept
 {

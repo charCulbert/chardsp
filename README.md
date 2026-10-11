@@ -95,6 +95,10 @@ The tests and examples also use [CHOC](https://github.com/Tracktion/choc)
 [CiCueTea](https://github.com/jdsierral/CiCueTea) by Juan Sierra — MIT; its
 notice is in `chardsp_ConstantQ.h`.
 
+`chardsp_StateVariableFilter.h` follows the TPT state-variable filter in the
+[Cmajor](https://github.com/cmajor-lang/cmajor) standard library — ISC; its
+notice is in that header.
+
 chardsp is ISC-licensed; see [LICENSE](LICENSE). Source distributions must
 retain the license files in this repository and its submodules.
 

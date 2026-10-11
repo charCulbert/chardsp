@@ -45,6 +45,7 @@ struct ColoredNoise
         brownState = std::clamp (brownState,
                                  static_cast<SampleType> (-1.25),
                                  static_cast<SampleType> (1.25));
+        // Paul Kellet's economy pink-noise filter.
         pinkState0 = static_cast<SampleType> (0.99765) * pinkState0
                    + static_cast<SampleType> (0.0990460) * white;
         pinkState1 = static_cast<SampleType> (0.96300) * pinkState1
