@@ -65,8 +65,6 @@ allocation-free during sample processing, and support `float` or `double`.
 - [`chardsp_SamplePlayer.h`](chardsp/chardsp_SamplePlayer.h) — forward mono
   playback from caller-owned samples with rate, position, and linear
   interpolation.
-- [`chardsp_SimpleDownsampler.h`](chardsp/chardsp_SimpleDownsampler.h) —
-  allocation-free power-of-two decimation for externally rendered samples.
 - [`chardsp_SmoothedValue.h`](chardsp/chardsp_SmoothedValue.h) — finite
   linear or multiplicative ramps with retargeting and fast skipping.
 - [`chardsp_Spectrum.h`](chardsp/chardsp_Spectrum.h) — windowed,

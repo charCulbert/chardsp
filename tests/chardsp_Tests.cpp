@@ -31,7 +31,6 @@
 #include "chardsp/chardsp_Oversampler.h"
 #include "chardsp/chardsp_Portamento.h"
 #include "chardsp/chardsp_SamplePlayer.h"
-#include "chardsp/chardsp_SimpleDownsampler.h"
 #include "chardsp/chardsp_SmoothedValue.h"
 #include "chardsp/chardsp_Spectrum.h"
 #include "chardsp/chardsp_StateVariableFilter.h"
@@ -1391,20 +1390,20 @@ void testBasicSynthVoice (choc::test::TestProgress& progress)
     CHOC_EXPECT_NEAR (halfVelocity.getOscillator2PulseWidth(), 0.999f, 0.000001f);
 }
 
-void testADSREnvelopeParity (choc::test::TestProgress& progress)
+void testADSREnvelopeKnownOutput (choc::test::TestProgress& progress)
 {
-    constexpr std::array<float, 12> exponentialReference {
+    constexpr std::array<float, 12> exponentialExpected {
         0.5758192539f, 0.8333333731f, 0.9484972358f, 1.000000119f,
         1.0f, 0.5794430375f, 0.3836265802f, 0.2924520075f,
         0.1296163648f, 0.05300405994f, 0.01695885509f, 0.0f
     };
-    constexpr std::array<float, 12> linearReference {
+    constexpr std::array<float, 12> linearExpected {
         0.25f, 0.5f, 0.75f, 1.0f, 0.8125f, 0.625f,
         0.4375f, 0.25f, 0.1875f, 0.125f, 0.0625f, 0.0f
     };
 
     const auto checkShape = [&] (chardsp::EnvelopeShape shape,
-                                  const std::array<float, 12>& reference)
+                                  const std::array<float, 12>& expected)
     {
         chardsp::ADSREnvelope<float> envelope;
         envelope.prepare (8.0f);
@@ -1415,12 +1414,12 @@ void testADSREnvelopeParity (choc::test::TestProgress& progress)
         envelope.setShape (shape);
         envelope.trigger();
 
-        for (size_t i = 0; i < reference.size(); ++i)
+        for (size_t i = 0; i < expected.size(); ++i)
         {
             if (i == 8)
                 envelope.release();
 
-            CHOC_EXPECT_NEAR (envelope.next(), reference[i], 0.0000002f);
+            CHOC_EXPECT_NEAR (envelope.next(), expected[i], 0.0000002f);
         }
 
         CHOC_EXPECT_NEAR (envelope.next(), 0.0f, 0.000001f);
@@ -1428,8 +1427,8 @@ void testADSREnvelopeParity (choc::test::TestProgress& progress)
         CHOC_EXPECT_NEAR (envelope.getCurrent(), 0.0f, 0.000001f);
     };
 
-    checkShape (chardsp::EnvelopeShape::exponential, exponentialReference);
-    checkShape (chardsp::EnvelopeShape::linear, linearReference);
+    checkShape (chardsp::EnvelopeShape::exponential, exponentialExpected);
+    checkShape (chardsp::EnvelopeShape::linear, linearExpected);
 }
 
 void testADSREnvelopeBehavior (choc::test::TestProgress& progress)
@@ -1563,39 +1562,39 @@ void testADSREnvelopeLiveUpdates (choc::test::TestProgress& progress)
     CHOC_EXPECT_EQ (allocationCount.load(), allocationsBeforeRender);
 }
 
-void testStateVariableFilterParity (choc::test::TestProgress& progress)
+void testStateVariableFilterKnownOutput (choc::test::TestProgress& progress)
 {
-    constexpr std::array<float, 12> lowpassReference {
+    constexpr std::array<float, 12> lowpassExpected {
         0.0638653487f, 0.2221318334f, 0.3453536034f, 0.3475232124f,
         0.2603360713f, 0.1298707128f, 0.0009858225239f, -0.09381454438f,
         -0.1393930465f, -0.1372193992f, -0.1005705744f, -0.04799349979f
     };
-    constexpr std::array<float, 12> highpassReference {
+    constexpr std::array<float, 12> highpassExpected {
         0.8029291034f, -0.419026643f, -0.4054655433f, -0.291936487f,
         -0.1340743452f, 0.01598238759f, 0.1219794974f, 0.1685767174f,
         0.1596950889f, 0.1123836935f, 0.04896689206f, -0.01006412879f
     };
-    constexpr std::array<float, 12> bandpassReference {
+    constexpr std::array<float, 12> bandpassExpected {
         0.226449429f, 0.334721135f, 0.102190307f, -0.094497406f,
         -0.214644892f, -0.247950276f, -0.209041018f, -0.127095711f,
         -0.034513498f, 0.042220652f, 0.087726228f, 0.098697950f
     };
 
     const auto checkMode = [&] (chardsp::FilterMode mode,
-                                 const std::array<float, 12>& reference)
+                                 const std::array<float, 12>& expected)
     {
         chardsp::StateVariableFilter<float> filter;
         filter.prepare (48000.0f);
         filter.setMode (mode);
         filter.setCutoffAndQ (4200.0f, 1.7f);
 
-        for (size_t i = 0; i < reference.size(); ++i)
-            CHOC_EXPECT_NEAR (filter.process (i == 0 ? 1.0f : 0.0f), reference[i], 0.000001f);
+        for (size_t i = 0; i < expected.size(); ++i)
+            CHOC_EXPECT_NEAR (filter.process (i == 0 ? 1.0f : 0.0f), expected[i], 0.000001f);
     };
 
-    checkMode (chardsp::FilterMode::lowpass, lowpassReference);
-    checkMode (chardsp::FilterMode::bandpass, bandpassReference);
-    checkMode (chardsp::FilterMode::highpass, highpassReference);
+    checkMode (chardsp::FilterMode::lowpass, lowpassExpected);
+    checkMode (chardsp::FilterMode::bandpass, bandpassExpected);
+    checkMode (chardsp::FilterMode::highpass, highpassExpected);
 }
 
 float filterSineRMS (float sampleRate,
@@ -1781,9 +1780,9 @@ void testStateVariableFilterBehavior (choc::test::TestProgress& progress)
     }
 }
 
-void testColoredNoiseParity (choc::test::TestProgress& progress)
+void testColoredNoiseKnownOutput (choc::test::TestProgress& progress)
 {
-    constexpr std::array<std::array<float, 8>, 4> references {{
+    constexpr std::array<std::array<float, 8>, 4> expected {{
         {{ 0.01566551067f, 0.008858673275f, 0.01390580833f, 0.02395696566f,
            0.007478474639f, 0.003550637746f, 0.0006154062576f, -0.001146828406f }},
         {{ 0.3141725659f, 0.05324643478f, 0.1570387632f, 0.3107728958f,
@@ -1806,8 +1805,8 @@ void testColoredNoiseParity (choc::test::TestProgress& progress)
         noise.reset (0x12345678u);
         noise.setColor (colors[color]);
 
-        for (const auto reference : references[color])
-            CHOC_EXPECT_NEAR (noise.next(), reference, 0.000001f);
+        for (const auto value : expected[color])
+            CHOC_EXPECT_NEAR (noise.next(), value, 0.000001f);
     }
 }
 
@@ -1885,95 +1884,6 @@ void testColoredNoiseBehavior (choc::test::TestProgress& progress)
     CHOC_EXPECT_EQ (allocationCount.load(), allocationsBeforeRender);
 }
 
-void testSimpleDownsamplerParity (choc::test::TestProgress& progress)
-{
-    constexpr std::array<float, 12> reference {
-        0.002049217699f, 0.04932555556f, 0.1835883409f, 0.07104226947f,
-        -0.1017052084f, 0.07502372563f, -0.04592199996f, 0.0247429572f,
-        -0.01101632882f, 0.002590026706f, 0.002369836438f, -0.005135977641f
-    };
-    chardsp::SimpleDownsampler<float, 4> downsampler;
-
-    for (size_t i = 0; i < reference.size(); ++i)
-        CHOC_EXPECT_NEAR (downsampler.process ({ i == 0 ? 1.0f : 0.0f,
-                                                0.0f, 0.0f, 0.0f }),
-                          reference[i], 0.000001f);
-
-    downsampler.reset();
-    CHOC_EXPECT_NEAR (downsampler.process ({ 1.0f, 0.0f, 0.0f, 0.0f }),
-                      reference[0], 0.000001f);
-}
-
-float downsampledSineRMS (float frequency)
-{
-    constexpr float oversampledRate = 192000.0f;
-    constexpr int discardedOutputs = 4096;
-    constexpr int measuredOutputs = 8192;
-    chardsp::SimpleDownsampler<float, 4> downsampler;
-    double sumSquares = 0.0;
-
-    for (int outputIndex = 0; outputIndex < discardedOutputs + measuredOutputs;
-         ++outputIndex)
-    {
-        std::array<float, 4> samples {};
-
-        for (int oversample = 0; oversample < 4; ++oversample)
-        {
-            const auto sampleIndex = outputIndex * 4 + oversample;
-            samples[static_cast<size_t> (oversample)] =
-                std::sin (6.283185307179586f * frequency
-                          * static_cast<float> (sampleIndex) / oversampledRate);
-        }
-
-        const auto output = downsampler.process (samples);
-
-        if (outputIndex >= discardedOutputs)
-            sumSquares += static_cast<double> (output) * output;
-    }
-
-    return static_cast<float> (std::sqrt (sumSquares / measuredOutputs));
-}
-
-void testSimpleDownsamplerBehavior (choc::test::TestProgress& progress)
-{
-    chardsp::SimpleDownsampler<float, 2> two;
-    chardsp::SimpleDownsampler<float, 4> four;
-    chardsp::SimpleDownsampler<float, 8> eight;
-    float dc2 = 0.0f;
-    float dc4 = 0.0f;
-    float dc8 = 0.0f;
-
-    for (int i = 0; i < 4096; ++i)
-    {
-        dc2 = two.process ({ 1.0f, 1.0f });
-        dc4 = four.process ({ 1.0f, 1.0f, 1.0f, 1.0f });
-        dc8 = eight.process ({ 1.0f, 1.0f, 1.0f, 1.0f,
-                               1.0f, 1.0f, 1.0f, 1.0f });
-    }
-
-    CHOC_EXPECT_NEAR (dc2, 1.0f, 0.00001f);
-    CHOC_EXPECT_NEAR (dc4, 1.0f, 0.00001f);
-    CHOC_EXPECT_NEAR (dc8, 1.0f, 0.00001f);
-
-    const auto lowFrequencyRMS = downsampledSineRMS (1000.0f);
-    const auto highFrequencyRMS = downsampledSineRMS (40000.0f);
-    CHOC_EXPECT_TRUE (lowFrequencyRMS > 0.65f);
-    CHOC_EXPECT_TRUE (highFrequencyRMS < lowFrequencyRMS * 0.1f);
-
-    const auto allocationsBeforeRender = allocationCount.load();
-    bool allFinite = true;
-
-    for (int i = 0; i < 200000; ++i)
-    {
-        const auto input = std::sin (0.031f * static_cast<float> (i));
-        allFinite = allFinite && std::isfinite (four.process (
-            { input, -input, input * 0.5f, -input * 0.5f }));
-    }
-
-    CHOC_EXPECT_TRUE (allFinite);
-    CHOC_EXPECT_EQ (allocationCount.load(), allocationsBeforeRender);
-}
-
 void testDoublePrecisionTypes (choc::test::TestProgress& progress)
 {
     static_assert (std::is_same_v<
@@ -2009,7 +1919,6 @@ void testDoublePrecisionTypes (choc::test::TestProgress& progress)
     noise.reset (0x12345678u);
     noise.setColor (chardsp::NoiseColor::pink);
 
-    chardsp::SimpleDownsampler<double, 4> downsampler;
     chardsp::PolyBLEPTriangleOscillator<double> oscillator;
     oscillator.prepare (48000.0);
     oscillator.setFrequency (440.0);
@@ -2034,10 +1943,7 @@ void testDoublePrecisionTypes (choc::test::TestProgress& progress)
 
         const auto excitation = oscillator.next() + noise.next() * 0.1;
         const auto filtered = filter.process (excitation) * envelope.next();
-        const auto downsampled = downsampler.process (
-            { filtered, filtered * 0.5, -filtered * 0.25,
-              filtered * 0.125 });
-        allFinite = allFinite && std::isfinite (downsampled)
+        allFinite = allFinite && std::isfinite (filtered)
                    && std::isfinite (ellipticSaw.next())
                    && std::isfinite (basicVoice.next());
     }
@@ -2206,8 +2112,7 @@ void testVoicePoolBasics (choc::test::TestProgress& progress)
     CHOC_EXPECT_EQ (pool.findVoice (60), 0);
     CHOC_EXPECT_EQ (pool.findVoice (62), 1);
 
-    // Unlike reference event-only allocator, the C++ pool can ask the voice when
-    // its tail is actually available and reclaim it immediately.
+    // The pool asks the voice when its tail has ended and reclaims it immediately.
     pool.prepare (1000.0f);
     pool.start (60, 1.0f);
     pool.stop (60);
@@ -2417,7 +2322,7 @@ void testVoicePoolLifecycle (choc::test::TestProgress& progress)
     CHOC_EXPECT_EQ (pool.getVoice (0).releaseCount, 1);
 
     // Release duration comes from the Voice, not a guessed allocator timeout.
-    // This tail deliberately lasts longer than reference old ten-second memory.
+    // This tail deliberately lasts longer than ten seconds.
     pool.prepare (10.0f);
     pool.start (74, 1.0f);
     pool.stop (74);
@@ -2563,7 +2468,7 @@ void testMonoVoiceController (choc::test::TestProgress& progress)
     CHOC_EXPECT_TRUE (! action.hasPitch() && ! action.shouldRelease());
     CHOC_EXPECT_EQ (mono.getHeldCount(), 1);
 
-    // Legato delays the final gate-off by reference 24 ms grace window.
+    // Legato delays the final gate-off by a 24 ms grace window.
     CHOC_EXPECT_FALSE (mono.stop (2).shouldRelease());
     CHOC_EXPECT_TRUE (mono.hasPendingGateOff());
 
@@ -3637,12 +3542,12 @@ int main()
       testOscillatorPhaseAndEllipticCorrection (progress); }
     { CHOC_TEST (generic_oscillators); testGenericOscillators (progress); }
     { CHOC_TEST (basic_synth_voice); testBasicSynthVoice (progress); }
-    { CHOC_TEST (adsr_reference); testADSREnvelopeParity (progress); }
+    { CHOC_TEST (adsr_known_output); testADSREnvelopeKnownOutput (progress); }
     { CHOC_TEST (adsr_behavior); testADSREnvelopeBehavior (progress); }
     { CHOC_TEST (adsr_live_updates); testADSREnvelopeLiveUpdates (progress); }
-    { CHOC_TEST (svf_reference); testStateVariableFilterParity (progress); }
+    { CHOC_TEST (svf_known_output); testStateVariableFilterKnownOutput (progress); }
     { CHOC_TEST (svf_behavior); testStateVariableFilterBehavior (progress); }
-    { CHOC_TEST (colored_noise_reference); testColoredNoiseParity (progress); }
+    { CHOC_TEST (colored_noise_known_output); testColoredNoiseKnownOutput (progress); }
     { CHOC_TEST (colored_noise_behavior); testColoredNoiseBehavior (progress); }
     { CHOC_TEST (analysis_buffer); testAnalysisBuffer (progress); }
     { CHOC_TEST (constant_q_bands); testConstantQBands (progress); }
@@ -3650,10 +3555,6 @@ int main()
     { CHOC_TEST (constant_q_columns); testConstantQColumns (progress); }
     { CHOC_TEST (constant_q_spectrogram); testConstantQSpectrogram (progress); }
     { CHOC_TEST (spectrum); testSpectrum (progress); }
-    { CHOC_TEST (simple_downsampler_reference);
-      testSimpleDownsamplerParity (progress); }
-    { CHOC_TEST (simple_downsampler_behavior);
-      testSimpleDownsamplerBehavior (progress); }
     { CHOC_TEST (double_precision_types); testDoublePrecisionTypes (progress); }
     { CHOC_TEST (voice_pool_basics); testVoicePoolBasics (progress); }
     { CHOC_TEST (voice_pool_stealing); testVoicePoolStealing (progress); }
