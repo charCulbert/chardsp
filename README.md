@@ -99,7 +99,7 @@ notice is in `chardsp_ConstantQ.h`.
 [Cmajor](https://github.com/cmajor-lang/cmajor) standard library — ISC; its
 notice is in that header.
 
-chardsp is ISC-licensed; see [LICENSE](LICENSE). Source distributions must
+chardsp is MIT-licensed; see [LICENSE](LICENSE). Source distributions must
 retain the license files in this repository and its submodules.
 
 Clone recursively:
